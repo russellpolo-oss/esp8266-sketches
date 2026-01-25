@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ESP8266 Shooter (Browser)</title>
+<style>
+  body {
+    background: black;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+  canvas {
+    image-rendering: pixelated;
+    border: 2px solid #444;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="game" width="128" height="64"></canvas>
+
+<script>
+/* ===== CONFIG ===== */
+const SCREEN_WIDTH = 128;
+const SCREEN_HEIGHT = 64;
+const SCALE = 5;
+
+const MINY = 16;
+const SHIPSIZE = 5;
+const TARGETSIZE = 8;
+
+const MAX_TARGETS = 5;
+const MAX_BULLETS = 50;
+const BULLET_SPEED = 4;
+const EXPLOSIONSPEED = 4;
+const FRAME_TIME = 35; // ms, matches ESP delay(35)
+let lastFrameTime = 0;
+
+//const explosions = [];
+
+const EXPLOSION_FRAMES = 6;
+const EXPLOSION_SIZE = 8;
+
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+
+const ROWS = [16, 24, 32, 40, 48];
+
+/* ===== CANVAS ===== */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+/* SCALE THE DRAWING CONTEXT (THIS WAS MISSING) */
+canvas.width = SCREEN_WIDTH;
+canvas.height = SCREEN_HEIGHT;
+canvas.style.width = SCREEN_WIDTH * SCALE + "px";
+canvas.style.height = SCREEN_HEIGHT * SCALE + "px";
+ctx.imageSmoothingEnabled = false;
+
+
+function playTone(freq, durationMs) {
+  const oscillator = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+
+  oscillator.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+
+  oscillator.type = "square"; // matches buzzer sound
+  oscillator.frequency.value = freq;
+
+  oscillator.start();
+  oscillator.stop(audioCtx.currentTime + durationMs / 1000);
+
+  // Optional: fade out
+  gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+  gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + durationMs / 1000);
+}
+
+
+
+function fireSound() {
+  playTone(2200, 40);
+}
+
+
+
+/* ===== INPUT ===== */
+let mouseY = SCREEN_HEIGHT / 2;
+let firePressed = false;
+let fireLatch = false;
+
+document.addEventListener("mousemove", e => {
+  const rect = canvas.getBoundingClientRect();
+  mouseY = ((e.clientY - rect.top) / rect.height) * SCREEN_HEIGHT;
+});
+
+canvas.addEventListener("touchstart", () => {
+     if (gameOver){
+      resetGame();        
+     }
+   else
+    {
+    firePressed = true;
+    };
+});
+
+canvas.addEventListener("touchend", () => {
+  firePressed = false;
+  fireLatch = false;
+});
+
+
+canvas.addEventListener("mousedown", e => {
+    if (gameOver){
+      resetGame();        
+     }
+   else
+    {
+    firePressed = true;
+    };
+});
+
+canvas.addEventListener("mouseup", e => {
+  firePressed = false;
+  fireLatch = false;
+});
+
+
+document.addEventListener("keydown", e => {
+  if (e.code === "Space") 
+    if (gameOver){
+      resetGame();        
+     }
+   else
+    {
+    firePressed = true;
+    };
+});
+document.addEventListener("keyup", e => {
+  if (e.code === "Space") {
+    firePressed = false;
+    fireLatch = false;
+  }
+});
+
+function resetGame() {
+  score = 0;
+  gameOver = false;
+
+  // clear bullets
+  for (let b of bullets) {
+    b.active = false;
+  }
+
+  // clear targets
+  for (let t of targets) {
+    t.active = false;
+  }
+
+  // clear explosions
+  for (let e of explosions) {
+    e.active = false;
+  }
+
+  startTime = performance.now();
+  lastSpawn = performance.now();
+requestAnimationFrame(loop);
+}
+
+
+/* ===== BITMAP DRAW ===== */
+function drawBitmap(x, y, bitmap, w, h) {
+  for (let row = 0; row < h; row++) {
+    let bits = bitmap[row];
+    for (let col = 0; col < w; col++) {
+      if (bits & (0x80 >> col)) {
+        ctx.fillRect(x + col, y + row, 1, 1);
+      }
+    }
+  }
+}
+
+/* ===== BITMAP DATA ===== */
+const shipBitmap = [
+  0b10000000,
+  0b01100000,
+  0b01111000,
+  0b01100000,
+  0b10000000
+];
+
+const explodeTop = [
+  0b00011000,
+  0b00111100,
+  0b01111110,
+  0b01100110,
+  0b11000111,
+  0b11000101,
+  0b10100000,
+  0b10010000
+];
+
+const explodeBot = [
+  0b10010000,
+  0b10100000,
+  0b11000101,
+  0b11000111,
+  0b01100110,
+  0b01111110,
+  0b00111100,
+  0b00011000
+];
+
+const bulletFrames = [
+  [0,0b01100000,0b01100000,0],
+  [0b10000000,0b01100000,0b01100000,0b01110000],
+  [0b01100000,0b01100000,0b01100000,0b01100000],
+  [0b00010000,0b01100000,0b01100000,0b10000000]
+];
+
+const EXPLODETOP = [
+  0b00011000,
+  0b00111100,
+  0b01111110,
+  0b01100110,
+  0b11000111,
+  0b11000101,
+  0b10100000,
+  0b10010000
+];
+
+const EXPLODEBOT = [
+  0b10010000,
+  0b10100000,
+  0b11000101,
+  0b11000111,
+  0b01100110,
+  0b01111110,
+  0b00111100,
+  0b00011000
+];
+
+
+const ringFrames = [
+  [0b00111100,0b01000010,0b10000001,0b10000001,0b10000001,0b10000001,0b01000010,0b00111100],
+  [0b00011100,0b00100010,0b01000001,0b01000001,0b01000001,0b01000001,0b00100010,0b00011100],
+  [0b00001100,0b00010010,0b00100001,0b00100001,0b00100001,0b00100001,0b00010010,0b00001100],
+  [0b00000100,0b00000100,0b00000100,0b00000100,0b00000100,0b00000100,0b00000100,0b00000100],
+  [0b00001100,0b01001000,0b10000100,0b10000100,0b10000100,0b10000100,0b01001000,0b00001100],
+  [0b00011100,0b01000100,0b10000010,0b10000010,0b10000010,0b10000010,0b01000100,0b00011100]
+];
+
+/* ===== GAME STATE ===== */
+let bullets = Array.from({length:MAX_BULLETS},()=>({active:false}));
+let targets = Array.from({length:MAX_TARGETS},()=>({active:false}));
+let explosions = Array.from({length:MAX_TARGETS},()=>({active:false}));
+
+let score = 0;
+let gameOver = false;
+let startTime = performance.now();
+let lastSpawn = 0;
+
+/* ===== HELPERS ===== */
+function elapsedSeconds() {
+  return Math.floor((performance.now() - startTime) / 1000);
+}
+
+function targetSpeed() {
+  return Math.min(1 + Math.floor(elapsedSeconds() / 20), 5);
+}
+
+function spawnDelay() {
+  return Math.max(1400 - elapsedSeconds() * 15, 350);
+}
+
+function spawnTarget() {
+  for (let t of targets) {
+    if (!t.active) {
+      t.active = true;
+      t.x = SCREEN_WIDTH - TARGETSIZE;
+      t.y = ROWS[Math.random() * ROWS.length | 0];
+      t.frame = 0;
+      return;
+    }
+  }
+}
+
+function spawnBullet(x, y) {
+  for (let b of bullets) {
+    if (!b.active) {
+      b.active = true;
+      b.x = x;
+      b.y = y;
+      b.frame = 0;
+      return;
+    }
+  }
+}
+
+function drawGameOver() {
+  ctx.fillStyle = "white";
+  ctx.fillText("GAME OVER", 20, 32);
+}
+
+function spawnExplosion(x, y) {
+  explosions.push({
+    x: Math.floor(x),
+    y: Math.floor(y),     // top bitmap
+    lowery: Math.floor(y),// bottom bitmap
+    active: true
+  });
+}
+
+
+function drawExplosion(e) {
+  drawBitmapNumber(e.x, e.y, EXPLODETOP, TARGETSIZE, TARGETSIZE);
+  drawBitmapNumber(e.x, e.lowery, EXPLODEBOT, TARGETSIZE, TARGETSIZE);
+}
+
+
+function drawBitmapNumber(x, y, bitmap, w, h) {
+  ctx.fillStyle = "white";
+  for (let row = 0; row < h; row++) {
+    let bits = bitmap[row];
+    for (let col = 0; col < w; col++) {
+      if (bits & (0x80 >> col)) {
+        ctx.fillRect(x + col, y + row, 1, 1);
+      }
+    }
+  }
+}
+
+function hitSound() {
+  playTone(900, 90);
+}
+
+
+function crashSound() {
+  let freq = 800;
+  const interval = 10; // ms
+  const step = 20;
+
+  const oscillator = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+
+  oscillator.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+
+  oscillator.type = "square";
+  oscillator.frequency.value = freq;
+  oscillator.start();
+
+  const startTime = audioCtx.currentTime;
+
+  for (let f = 0; f <= (800-200)/step; f++) {
+    oscillator.frequency.setValueAtTime(800 - f*step, startTime + f*interval/1000);
+  }
+
+  oscillator.stop(startTime + ((800-200)/step * interval)/1000);
+}
+
+
+
+/* ===== LOOP ===== */
+function loop(timestamp) {
+ if (gameOver) {
+    drawGameOver();
+    return;
+  }
+  if (timestamp - lastFrameTime < FRAME_TIME) {
+    requestAnimationFrame(loop);
+    return;
+  }
+  lastFrameTime = timestamp;
+
+  ctx.fillStyle = "black";
+  ctx.fillRect(0,0,SCREEN_WIDTH,SCREEN_HEIGHT);
+  ctx.fillStyle = "white";
+  ctx.font = "6px monospace";
+
+  /* ===== SHIP ===== */
+  let shipY = Math.max(
+    MINY,
+    Math.min(SCREEN_HEIGHT - SHIPSIZE, mouseY | 0)
+  );
+  drawBitmap(0, shipY, shipBitmap, 5, 5);
+
+  /* ===== FIRE ===== */
+if (firePressed && !fireLatch) {
+    spawnBullet(SHIPSIZE, shipY + 2);
+    fireSound();
+  };
+
+
+
+  /* ===== BULLETS ===== */
+  for (let b of bullets) {
+    if (!b.active) continue;
+    b.x += BULLET_SPEED;
+    b.frame = (b.frame + 1) % bulletFrames.length;
+
+    drawBitmap(b.x - 1, b.y - 1, bulletFrames[b.frame], 4, 4);
+
+    if (b.x > SCREEN_WIDTH) b.active = false;
+  }
+
+  /* ===== TARGET SPAWN ===== */
+  if (performance.now() - lastSpawn > spawnDelay()) {
+    spawnTarget();
+    lastSpawn = performance.now();
+  }
+
+  /* ===== TARGET MOVE ===== */
+  for (let t of targets) {
+    if (!t.active) continue;
+    // Ship hit (FIXED)
+  if (
+     t.x < SHIPSIZE &&               // target left edge before ship right edge
+      // (t.x + TARGETSIZE) > 0 &&       // target right edge past ship left edge
+       (t.y + TARGETSIZE) > shipY &&   // target bottom below ship top
+        t.y < (shipY + SHIPSIZE)        // target top above ship bottom
+    ) {
+      gameOver = true;
+crashSound();
+   }
+
+
+
+    t.x -= targetSpeed();
+    t.frame = (t.frame + 1) % ringFrames.length;
+
+    drawBitmap(t.x, t.y, ringFrames[t.frame], 8, 8);
+
+    if (t.x < -TARGETSIZE) {t.active = false;};
+  }
+/// update explosions
+for (let i = explosions.length - 1; i >= 0; i--) {
+  const e = explosions[i];
+
+  if (!e.active) continue;
+
+  // Move top up, bottom down
+  e.y -= EXPLOSIONSPEED;
+  e.lowery += EXPLOSIONSPEED;
+
+  // Remove if both parts are outside the screen
+  if (e.y < -TARGETSIZE && e.lowery > SCREEN_HEIGHT - TARGETSIZE) {
+    e.active=false; // should not need thisbut I see phantom explostions
+    explosions.splice(i, 1);
+  }
+}
+
+  /* ===== COLLISIONS ===== */
+  for (let t of targets) {
+    if (!t.active) continue;
+
+    // Bullet hit
+    for (let b of bullets) {
+      if (b.active &&
+          b.x >= t.x &&
+          b.x <= t.x + TARGETSIZE &&
+          b.y >= t.y &&
+          b.y <= t.y + TARGETSIZE) {
+
+        b.active = false;
+        t.active = false;
+        score++;
+        spawnExplosion(
+          t.x + TARGETSIZE / 2,
+          t.y + TARGETSIZE / 2
+            );
+         hitSound();
+
+      }
+    }
+
+for (const e of explosions) {
+  drawExplosion(e);
+}
+
+    
+
+  }
+
+  ctx.fillText("Score:"+score+" T:"+elapsedSeconds(), 0, 7);
+
+  requestAnimationFrame(loop);
+}
+
+
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
