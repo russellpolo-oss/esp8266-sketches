@@ -7,6 +7,7 @@
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
 
+
 #define D1 5
 #define D2 4
 #define BUZZER_PIN 12  // D6
