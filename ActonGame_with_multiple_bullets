@@ -29,6 +29,15 @@ bool soundActive = false;
 unsigned long soundEndTime = 0;
 int currentSoundFreq = 0;
 
+int shockwaveX =0 ;
+int shockwavePoints=0; 
+int shockwaveactive=0;
+int shockwavesound=0;
+#define POINTS_FOR_SHOCKWAVE 10
+#define SHOCKWAVE_SPEED 18
+#define SHOCKWAVE_SIZE 25
+
+
 
 /* ===== SHIP BITMAP (5x5) ===== */
 const uint8_t shipBitmap[] PROGMEM = {
@@ -260,10 +269,23 @@ void hitSound() {
   startSound(900, 90);    // slightly longer impact
 }
 
+void shockwaveSound(){
+    startSound(600,300);
+    shockwavesound=1;
+}
+
 void updateSound() {
+  if (shockwavesound>0) {
+    // Static / buzz effect
+    int jitter = random(-100, 300);
+    tone(BUZZER_PIN, 600 + jitter);
+  };
+
+
   if (soundActive && millis() >= soundEndTime) {
     noTone(BUZZER_PIN);
     soundActive = false;
+    shockwavesound=0;
   }
 }
 
@@ -341,6 +363,10 @@ void resetGame() {
   gameOver = false;
   bulletActive = false;
   current_max_bullets=1; 
+  shockwaveX =0 ;
+  shockwavePoints=0; 
+  shockwaveactive=0;
+  shockwavesound=0;
 
   for (int i = 0; i < MAX_TARGETS; i++) {
     targets[i].active = false;
@@ -411,13 +437,11 @@ void loop() {
       }
 
 
-  if (digitalRead(D5) == LOW){
-      //display.clearDisplay();
-    display.setTextSize(1);
-    display.setCursor(32, 34);
-    display.println("SWITCH CLICK");
-     display.display();
-     //delay(5000);
+  if ((digitalRead(D5) == LOW)&&(shockwavePoints>=POINTS_FOR_SHOCKWAVE)){
+      shockwaveX=-SHOCKWAVE_SIZE;
+      shockwaveactive=1; 
+      shockwavePoints=0;
+      shockwaveSound();
       }
 
 
@@ -451,7 +475,25 @@ void loop() {
     }
   }
 
-
+// Move shockwave
+ if (shockwaveactive>0){
+   shockwaveX=shockwaveX+SHOCKWAVE_SPEED; 
+  // kill targets in range
+  for (int i = 0; i < MAX_TARGETS; i++) {
+    if (!targets[i].active) continue;
+     
+    if ((targets[i].x >= shockwaveX) && (targets[i].x<= shockwaveX+SHOCKWAVE_SIZE))
+        {
+          targets[i].active = false;     
+          score++;
+          spawnExplosion(targets[i].x,targets[i].y);
+        };
+  }; //for alltargets
+   if (shockwaveX>SCREEN_WIDTH){
+       shockwaveX=0;
+       shockwaveactive=0;
+       };
+ }
 
 
   /* ===== SPAWN TARGETS ===== */
@@ -505,6 +547,7 @@ void loop() {
       bulletActive = false;
       score++;
       if (current_max_bullets<MAX_BULLETS){current_max_bullets++;};
+      shockwavePoints++;
       hitSound();
       spawnExplosion(targets[i].x,targets[i].y);
         } // for all bullets
@@ -532,6 +575,17 @@ display.print(elapsedSeconds());
 display.print(" B:");
 display.print(current_max_bullets);
 
+if (shockwavePoints>0)
+   {
+    display.fillRect(max(SCREEN_WIDTH-POINTS_FOR_SHOCKWAVE,0),0, min( POINTS_FOR_SHOCKWAVE, shockwavePoints), 10, SSD1306_WHITE);
+    if (shockwavePoints>=POINTS_FOR_SHOCKWAVE)
+       {
+        display.setTextColor(SSD1306_BLACK);
+        display.setCursor(SCREEN_WIDTH-POINTS_FOR_SHOCKWAVE+2, 2);
+        display.print("S");
+        display.setTextColor(SSD1306_WHITE); 
+       } 
+   }
 // check for extra bullets
 if ((elapsedSeconds()/60)>current_min_bullets){current_min_bullets=elapsedSeconds()/60;};
 
@@ -573,6 +627,10 @@ if ((elapsedSeconds()/60)>current_min_bullets){current_min_bullets=elapsedSecond
     }
   }
 
+//  shockwave
+   if (shockwaveactive){
+    display.fillRect(max(shockwaveX,0),0, SHOCKWAVE_SIZE, SCREEN_HEIGHT, SSD1306_WHITE);   
+   };
 
   display.display();
   updateSound();
