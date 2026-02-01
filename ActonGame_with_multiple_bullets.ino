@@ -2,6 +2,19 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
+/* hardware assumptions
+OLED display on I2C (D1=SCL, D2=SDA)
+Buzzer output  D6 pin 12
+
+inputs:
+Analog joystick on A0 for vertical movement (motion is inverted)
+Fire button on D7 pin 13(active low)
+Shockwave fire on D3 pin 0 (active low)
+Joystick fire on D5 pin 14 (active low) (used for game restart )
+
+*/
+
+
 /* ===== OLED CONFIG ===== */
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
