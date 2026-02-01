@@ -9,8 +9,10 @@
 
 #define D1 5
 #define D2 4
-#define BUZZER_PIN 12
+#define BUZZER_PIN 12  // D6
 #define D7 13   // fire button
+#define D5 14   // Joystick fire button
+#define SWITCH_PIN 0   // D3 
 
 #define MINY 16
 #define SHIPSIZE 5
@@ -205,7 +207,8 @@ struct Target {
 };
 
 Target targets[MAX_TARGETS];
-
+int current_max_bullets=1; 
+int current_min_bullets=1;
 
 /* ===== bullet STRUCT ===== */
 struct bullet_struct {
@@ -231,8 +234,8 @@ Explosion explosions[MAX_TARGETS];
 unsigned long lastSpawn = 0;
 
 /* ===== ROWS ===== */
-int rows[] = {16, 24, 32, 40, 48};
-const int ROWCOUNT = 5;
+int rows[] = {16, 24, 32, 40, 48,54};
+const int ROWCOUNT = 6;
 
 /*needed to compute diffaculy*/
 unsigned long elapsedSeconds() {
@@ -305,7 +308,7 @@ void spawnTarget() {
 }
 
 void spawnBullet(int x , int y) {
-  for (int i = 0; i < MAX_BULLETS; i++) {
+  for (int i = 0; i < current_max_bullets; i++) {
     if (!bullets[i].active) {
       bullets[i].active = true;
       bullets[i].x = x;
@@ -337,6 +340,7 @@ void resetGame() {
   score = 0;
   gameOver = false;
   bulletActive = false;
+  current_max_bullets=1; 
 
   for (int i = 0; i < MAX_TARGETS; i++) {
     targets[i].active = false;
@@ -357,7 +361,8 @@ void resetGame() {
 void setup() {
   randomSeed(analogRead(A0));
   pinMode(D7, INPUT_PULLUP);
-
+  pinMode(D5, INPUT_PULLUP);
+  pinMode(SWITCH_PIN, INPUT_PULLUP);
   Wire.begin(D2, D1);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
 
@@ -389,12 +394,32 @@ void loop() {
     display.print(gameEndSec);
     display.display();
 
-    if (digitalRead(D7) == LOW) {
+    if (digitalRead(SWITCH_PIN) == LOW) {
       delay(250);
       resetGame();
     }
     return;
   }
+
+  if (digitalRead(SWITCH_PIN) == LOW){
+      //display.clearDisplay();
+    display.setTextSize(1);
+    display.setCursor(32, 24);
+    display.println("JOYSTICK CLICK");
+     display.display();
+     //delay(5000);
+      }
+
+
+  if (digitalRead(D5) == LOW){
+      //display.clearDisplay();
+    display.setTextSize(1);
+    display.setCursor(32, 34);
+    display.println("SWITCH CLICK");
+     display.display();
+     //delay(5000);
+      }
+
 
   /* ===== SHIP POSITION ===== */
   int adc = analogRead(A0);
@@ -420,6 +445,8 @@ void loop() {
 
       if (bullets[i].x > SCREEN_WIDTH) {
         bullets[i].active = false;
+        // target missed
+        if (current_min_bullets<current_max_bullets){current_max_bullets--;};
       }
     }
   }
@@ -442,6 +469,8 @@ void loop() {
 
       if (targets[i].x < -TARGETSIZE) {
         targets[i].active = false;
+         // target missed
+        if (current_min_bullets<current_max_bullets){current_max_bullets--;};
       }
     }
   }
@@ -475,6 +504,7 @@ void loop() {
       targets[i].active = false;
       bulletActive = false;
       score++;
+      if (current_max_bullets<MAX_BULLETS){current_max_bullets++;};
       hitSound();
       spawnExplosion(targets[i].x,targets[i].y);
         } // for all bullets
@@ -498,6 +528,12 @@ display.print("Score:");
 display.print(score);
 display.print(" T:");
 display.print(elapsedSeconds());
+
+display.print(" B:");
+display.print(current_max_bullets);
+
+// check for extra bullets
+if ((elapsedSeconds()/60)>current_min_bullets){current_min_bullets=elapsedSeconds()/60;};
 
 
   // Ship
