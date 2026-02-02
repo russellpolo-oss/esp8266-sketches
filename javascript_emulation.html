@@ -38,10 +38,7 @@ const EXPLOSIONSPEED = 4;
 const FRAME_TIME = 35; // ms, matches ESP delay(35)
 let lastFrameTime = 0;
 
-//const explosions = [];
 
-const EXPLOSION_FRAMES = 6;
-const EXPLOSION_SIZE = 8;
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
@@ -191,27 +188,7 @@ const shipBitmap = [
   0b10000000
 ];
 
-const explodeTop = [
-  0b00011000,
-  0b00111100,
-  0b01111110,
-  0b01100110,
-  0b11000111,
-  0b11000101,
-  0b10100000,
-  0b10010000
-];
 
-const explodeBot = [
-  0b10010000,
-  0b10100000,
-  0b11000101,
-  0b11000111,
-  0b01100110,
-  0b01111110,
-  0b00111100,
-  0b00011000
-];
 
 const bulletFrames = [
   [0,0b01100000,0b01100000,0],
