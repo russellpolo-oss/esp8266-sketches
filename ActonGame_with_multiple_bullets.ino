@@ -50,6 +50,8 @@ int shockwavesound=0;
 #define SHOCKWAVE_SPEED 18
 #define SHOCKWAVE_SIZE 25
 
+int looptimer =0;
+#define MINLOOPTIME 40  // loop time should be at-least 40 milisecods. 
 
 
 /* ===== SHIP BITMAP (5x5) ===== */
@@ -415,6 +417,8 @@ void setup() {
 /* ===== LOOP ===== */
 void loop() {
 
+  looptimer=millis(); // record start of loop time
+
   /* ===== GAME OVER SCREEN ===== */
   if (gameOver) {
     display.clearDisplay();
@@ -647,6 +651,9 @@ if ((elapsedSeconds()/60)>current_min_bullets){current_min_bullets=elapsedSecond
 
   display.display();
   updateSound();
-
-  delay(35);
+  while (millis()<looptimer+MINLOOPTIME)
+    {
+  delay(2);
+  updateSound();
+    };
 }
