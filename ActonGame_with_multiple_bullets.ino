@@ -50,6 +50,34 @@ int shockwavesound=0;
 #define SHOCKWAVE_SPEED 18
 #define SHOCKWAVE_SIZE 25
 
+int looptimer =0;
+#define MINLOOPTIME 40  // loop time should be at-least 40 milisecods. 
+
+//gamemodes
+#define GAMEMODE_SELECTOR 0
+#define GAMEMODE_BLASTER GAMEMODE_SELECTOR+1  
+struct GameEntry {
+  const char* name;
+  int mode;
+};
+
+GameEntry gameList[] = {
+  {"Blaster", GAMEMODE_BLASTER},
+  {"(future) Mode 2", 2},
+  {"(future) Mode 3", 3},
+  {"(future) Mode 4", 4},
+  {"(future) Mode 5", 5},
+  {"(future) Mode 6", 6},
+  {"(future) Mode 7", 7}
+};
+
+const int GAME_COUNT = sizeof(gameList) / sizeof(gameList[0]);
+
+int gamemode=GAMEMODE_SELECTOR; // default to selector
+int selectedGame = 0;
+unsigned long lastNavTime = 0;
+#define NAV_DELAY 180   // ms debounce for joystick movement
+
 
 
 /* ===== SHIP BITMAP (5x5) ===== */
@@ -412,10 +440,64 @@ void setup() {
   resetGame();
 }
 
-/* ===== LOOP ===== */
-void loop() {
+void game_selector() {
+  display.clearDisplay();
+  display.setTextSize(1);
 
-  /* ===== GAME OVER SCREEN ===== */
+  /* ===== JOYSTICK NAVIGATION ===== */
+  int adc = analogRead(A0);
+
+  // Dead zone centered roughly around middle
+  if (millis() - lastNavTime > NAV_DELAY) {
+    if (adc < 350) {               // joystick UP
+      selectedGame--;
+      if (selectedGame < 0) selectedGame = GAME_COUNT - 1;
+      lastNavTime = millis();
+    }
+    else if (adc > 700) {          // joystick DOWN
+      selectedGame++;
+      if (selectedGame >= GAME_COUNT) selectedGame = 0;
+      lastNavTime = millis();
+    }
+  }
+
+  /* ===== DRAW MENU ===== */
+  int centerY = 32;
+  int lineHeight = 12;
+
+  for (int i = -1; i <= 1; i++) {
+    int idx = selectedGame + i;
+    if (idx < 0 || idx >= GAME_COUNT) continue;
+
+    int y = centerY + (i * lineHeight);
+
+    if (i == 0) {
+      // Selected item (white background, black text)
+      display.fillRect(0, y - 2, SCREEN_WIDTH, 10, SSD1306_WHITE);
+      display.setTextColor(SSD1306_BLACK);
+    } else {
+      display.setTextColor(SSD1306_WHITE);
+    }
+
+    display.setCursor(10, y);
+    display.print(gameList[idx].name);
+  }
+
+  display.setTextColor(SSD1306_WHITE);
+
+  /* ===== SELECT GAME ===== */
+  if (digitalRead(D5) == LOW) {
+    resetGame();
+    gamemode = gameList[selectedGame].mode;
+  }
+}
+
+
+
+
+void blaster_game()
+{
+    /* ===== GAME OVER SCREEN ===== */
   if (gameOver) {
     display.clearDisplay();
     display.setTextSize(1);
@@ -645,8 +727,27 @@ if ((elapsedSeconds()/60)>current_min_bullets){current_min_bullets=elapsedSecond
     display.fillRect(max(shockwaveX,0),0, SHOCKWAVE_SIZE, SCREEN_HEIGHT, SSD1306_WHITE);   
    };
 
+}
+/* ===== LOOP ===== */
+void loop() {
+  looptimer=millis(); // record start of loop time
+  switch (gamemode) {
+    case GAMEMODE_SELECTOR:
+      game_selector();
+      break;  
+    case GAMEMODE_BLASTER:
+      blaster_game();
+      break;
+ 
+  }
+
+  
   display.display();
   updateSound();
 
-  delay(35);
+  while (millis()<looptimer+MINLOOPTIME)
+    {
+  delay(2);
+  updateSound();
+    };
 }
