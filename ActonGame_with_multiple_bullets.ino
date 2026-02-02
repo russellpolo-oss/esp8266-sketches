@@ -445,7 +445,7 @@ void game_selector() {
   display.setTextSize(1);
 
   /* ===== JOYSTICK NAVIGATION ===== */
-  int adc = analogRead(A0);
+  int adc = 1024-analogRead(A0);  // reversed direction
 
   // Dead zone centered roughly around middle
   if (millis() - lastNavTime > NAV_DELAY) {
@@ -486,7 +486,7 @@ void game_selector() {
   display.setTextColor(SSD1306_WHITE);
 
   /* ===== SELECT GAME ===== */
-  if (digitalRead(D5) == LOW) {
+  if (digitalRead(SWITCH_PIN) == LOW) {
     resetGame();
     gamemode = gameList[selectedGame].mode;
   }
