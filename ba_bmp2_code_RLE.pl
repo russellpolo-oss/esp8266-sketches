@@ -7,6 +7,8 @@ my $HEIGHT         = 64;
 my $PAD_TO_BITS    = 88;
 my $BYTES_PER_ROW  = $PAD_TO_BITS / 8; # 11
 my $BYTES_PER_FRAME_UNCOMP = $HEIGHT * $BYTES_PER_ROW; # 704
+my $total_savings = 0;
+my $original_total = 1; # Avoid division by zero
 
 # Rotation amount (positive for left, negative for right)
 my $CIRCULAR_SHIFT_BITS = 18;  # Adjust sign if direction wrong
@@ -16,6 +18,10 @@ my $ESCAPE_BYTE = 0x55;  # Unlikely pattern
 
 my @all_compressed_frames;
 my @frame_sizes;
+## set previous_frame to 704 bites of 0x00 (all black) for first frame diff
+my @previous_frame = (0) x $BYTES_PER_FRAME_UNCOMP;
+my $frame_num = 0;
+my $KEYFRAME_EVERY = 10000;  # set frequency of keyframes (0 = all keyframes, no deltas)
 
 foreach my $filename (@ARGV) {
     open my $fh, '<:raw', $filename or do {
@@ -91,30 +97,53 @@ foreach my $filename (@ARGV) {
             push @uncomp_bytes, $byte_val;
         }
     }
+# We need a persistent previous frame across files/frames
+# Declare this **outside** the loop, at the top of the script:
+# my @previous_frame = ();   # initially empty → first frame is keyframe
 
-    # RLE compress the 704 bytes
-    my @compressed = ();
-    my $i = 0;
-    while ($i < @uncomp_bytes) {
-        my $byte = $uncomp_bytes[$i];
-        my $count = 1;
-        $i++;
-        while ($i < @uncomp_bytes && $uncomp_bytes[$i] == $byte && $count < 255) {
-            $count++;
-            $i++;
-        }
+# ────────────────────────────────────────────────
+# Inside the per-frame processing, after building @uncomp_bytes
 
-        if ($count > 2 || $byte == $ESCAPE_BYTE) {
-            push @compressed, $ESCAPE_BYTE, $count, $byte;
-        } else {
-            push @compressed, ($byte) x $count;
-        }
+my @delta_bytes = @uncomp_bytes;   # start with a copy
+
+if (@previous_frame && $frame_num % $KEYFRAME_EVERY != 0) {
+    # XOR with previous reconstructed frame
+    for my $i (0 .. $#uncomp_bytes) {
+        $delta_bytes[$i] ^= $previous_frame[$i];
     }
+}
+
+# Now @delta_bytes contains either full frame (keyframe) or delta
+
+# Compress the delta / full frame
+my @compressed = ();
+my $i = 0;
+while ($i < @delta_bytes) {
+    my $byte = $delta_bytes[$i];
+    my $count = 1;
+    $i++;
+    while ($i < @delta_bytes && $delta_bytes[$i] == $byte && $count < 255) {
+        $count++;
+        $i++;
+    }
+
+    if ($count > 2 || $byte == $ESCAPE_BYTE) {
+        push @compressed, $ESCAPE_BYTE, $count, $byte;
+    } else {
+        push @compressed, ($byte) x $count;
+    }
+}
+
+# IMPORTANT: update previous to the ORIGINAL frame (not the delta!)
+@previous_frame = @uncomp_bytes;
+$frame_num++;
 
     push @all_compressed_frames, \@compressed;
     push @frame_sizes, scalar(@compressed);
 
     print STDERR "Processed $filename: compressed " . scalar(@compressed) . "B\n";
+    $total_savings += (scalar(@uncomp_bytes) - scalar(@compressed));
+    $original_total += scalar(@uncomp_bytes);
 }
 
 # ------------------------------------------------
@@ -148,3 +177,5 @@ print "// Total compressed size: $total_size bytes\n";
 print "// Avg per frame: " . sprintf("%.1f", $total_size / scalar(@all_compressed_frames)) . "\n";
 print "// Rotation: $CIRCULAR_SHIFT_BITS bits before padding\n";
 print "// Padding: duplicate last bit x3\n";
+print "// Total uncompressed size: $original_total bytes\n";
+print "// Total savings: $total_savings bytes (" . sprintf("%.1f", 100 * $total_savings / $original_total) . "%)\n";
