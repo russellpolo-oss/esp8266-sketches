@@ -21,7 +21,7 @@ my @frame_sizes;
 ## set previous_frame to 704 bites of 0x00 (all black) for first frame diff
 my @previous_frame = (0) x $BYTES_PER_FRAME_UNCOMP;
 my $frame_num = 0;
-my $KEYFRAME_EVERY = 10000;  # set frequency of keyframes (0 = all keyframes, no deltas)
+my $KEYFRAME_EVERY = 100;  # set frequency of keyframes (0 = all keyframes, no deltas)
 
 foreach my $filename (@ARGV) {
     open my $fh, '<:raw', $filename or do {
@@ -151,6 +151,7 @@ $frame_num++;
 # ------------------------------------------------
 
 print "#define NUM_FRAMES " . scalar(@all_compressed_frames) . "\n\n";
+print "#define KEYFRAME_EVERY $KEYFRAME_EVERY\n\n";
 
 print "const uint8_t compressed_data[] PROGMEM = {\n";
 
