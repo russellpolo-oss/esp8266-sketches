@@ -42,8 +42,11 @@ uint8_t partnerMac[6];
 bool roleConflictDetected = false;
 
 /* ===== PADDLES ===== */
+/* ===== PADDLES (updated globals) ===== */
 int paddleLeftY = 26;
 int paddleRightY = 26;
+int lastPaddleLeftY = 26;   // ← ADD THESE
+int lastPaddleRightY = 26;  // ← FOR MASTER TRACKING
 
 /* ===== TIMING ===== */
 unsigned long lastDiscoverySend = 0;
@@ -487,14 +490,11 @@ if (gameState == STATE_READY) {
 }
 
 
-
-
-
-
-
-
-
 if (gameState == STATE_PLAYING && isMaster) {
+  // Compute paddle velocities from last frame to current (before physics)
+  int leftPaddleVY  = paddleLeftY  - lastPaddleLeftY;
+  int rightPaddleVY = paddleRightY - lastPaddleRightY;
+
   ballX += ballVX;
   ballY += ballVY;
 
@@ -503,47 +503,65 @@ if (gameState == STATE_PLAYING && isMaster) {
     ballVY = -ballVY;
   }
 
-// ----- LEFT PADDLE -----
-if (ballVX < 0 &&
-    ballX <= LEFT_PADDLE_X + PADDLE_WIDTH &&
-    ballX >= LEFT_PADDLE_X &&
-    ballY + BALL_SIZE >= paddleLeftY &&
-    ballY <= paddleLeftY + PADDLE_HEIGHT) {
+  // ----- LEFT PADDLE COLLISION (ENHANCED) -----
+  if (ballVX < 0 &&
+      ballX <= LEFT_PADDLE_X + PADDLE_WIDTH &&
+      ballX >= LEFT_PADDLE_X &&
+      ballY + BALL_SIZE >= paddleLeftY &&
+      ballY <= paddleLeftY + PADDLE_HEIGHT) {
 
-  ballVX = -ballVX;
+    ballVX = -ballVX;
 
-  int hitPos = ballY - paddleLeftY;
-  ballVY = map(hitPos, 0, PADDLE_HEIGHT, -2, 2);
-}
+    int hitPos = ballY - paddleLeftY;
+    ballVY = map(hitPos, 0, PADDLE_HEIGHT, -2, 2);
+    
+    // ← ADD: Apply paddle motion to ball
+    ballVY += leftPaddleVY * 0.6f;  // 0.6 = tunable factor (try 0.4-0.8)
+    ballVY = constrain(ballVY, -4, 4);  // Clamp to sane speeds
 
-// ----- RIGHT PADDLE -----
-if (ballVX > 0 &&
-    ballX + BALL_SIZE >= RIGHT_PADDLE_X &&
-    ballX + BALL_SIZE <= RIGHT_PADDLE_X + PADDLE_WIDTH &&
-    ballY + BALL_SIZE >= paddleRightY &&
-    ballY <= paddleRightY + PADDLE_HEIGHT) {
+    Serial.print("Left hit! paddleVY="); Serial.print(leftPaddleVY);
+    Serial.print(" new ballVY="); Serial.println(ballVY);  // Debug (remove later)
+  }
 
-  ballVX = -ballVX;
+  // ----- RIGHT PADDLE COLLISION (ENHANCED) -----
+  if (ballVX > 0 &&
+      ballX + BALL_SIZE >= RIGHT_PADDLE_X &&
+      ballX + BALL_SIZE <= RIGHT_PADDLE_X + PADDLE_WIDTH &&
+      ballY + BALL_SIZE >= paddleRightY &&
+      ballY <= paddleRightY + PADDLE_HEIGHT) {
 
-  int hitPos = ballY - paddleRightY;
-  ballVY = map(hitPos, 0, PADDLE_HEIGHT, -2, 2);
-}
+    ballVX = -ballVX;
 
-// ----- MISS LEFT -----
-if (ballX < 0) {
-  scoreRight++;
-  resetBall(true);   // toward left player (who missed)
-}
+    int hitPos = ballY - paddleRightY;
+    ballVY = map(hitPos, 0, PADDLE_HEIGHT, -2, 2);
+    
+    // ← ADD: Apply paddle motion to ball
+    ballVY += rightPaddleVY * 0.6f;  // Same factor
+    ballVY = constrain(ballVY, -4, 4);  // Clamp
 
-// ----- MISS RIGHT -----
-if (ballX > SCREEN_WIDTH) {
-  scoreLeft++;
-  resetBall(false);  // toward right player (who missed)
-}
+    Serial.print("Right hit! paddleVY="); Serial.print(rightPaddleVY);
+    Serial.print(" new ballVY="); Serial.println(ballVY);  // Debug (remove later)
+  }
 
+  // ----- MISS LEFT -----
+  if (ballX < 0) {
+    scoreRight++;
+    resetBall(true);
+  }
+
+  // ----- MISS RIGHT -----
+  if (ballX > SCREEN_WIDTH) {
+    scoreLeft++;
+    resetBall(false);
+  }
 
   sendState();
+
+  // ← ADD: Update last positions for NEXT frame
+  lastPaddleLeftY  = paddleLeftY;
+  lastPaddleRightY = paddleRightY;
 }
+
 if (gameState == STATE_PLAYING) {
   drawBall();
 }
