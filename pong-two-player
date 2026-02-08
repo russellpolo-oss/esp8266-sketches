@@ -24,6 +24,9 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define SCORE_TO_WIN 11
 #define BALL_SPEED_X 2
 
+/* ===== TIMING (add this new one) ===== */
+unsigned long lastPacketFromPartner = 0;   // updated every time ANY packet arrives from partner
+const unsigned long PARTNER_TIMEOUT_MS = 5000;  // 5 seconds
 
 /* ===== GAME STATE ===== */
 enum GameState {
@@ -132,6 +135,18 @@ void onDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
     Serial.println("Bogus Discovery packet received");
     return;
     };
+
+  if (partnerFound) {
+    // Quick MAC compare (only first 3 bytes for speed, or full 6 if paranoid)
+    bool fromPartner = (memcmp(mac, partnerMac, 6) == 0);
+    if (fromPartner) {
+      lastPacketFromPartner = millis();
+      // Optional debug:
+      // Serial.print("Packet from partner → timeout reset (type ");
+      // Serial.print(type); Serial.println(")");
+    }
+  }
+
   if (type == PKT_YOUARECLIENT) {
     if (!partnerFound) {
       memcpy(partnerMac, mac, 6);
@@ -356,7 +371,7 @@ void setup() {
   pinMode(BTN_PIN, INPUT_PULLUP);
 
   Serial.begin(9600);
-  delay(2000);               // give USB time to enumerate
+  //delay(2000);               // give USB time to enumerate
   Serial.println("\n\n===== ESP8266 Pong starting =====");
   Serial.flush();           // force send
 
@@ -413,6 +428,21 @@ if (roleConflictDetected && partnerFound) {
   // Optional: clear peer list if you want (but not strictly needed)
   Serial.println("Conflict reset → back to Searching");
 }
+/* check for timeout */
+  if (partnerFound && gameState != STATE_SEARCHING) {
+    if (millis() - lastPacketFromPartner > PARTNER_TIMEOUT_MS) {
+      Serial.println("No packets from partner for 5s → timeout! Reverting to Searching...");
+      partnerFound = false;
+      localReady = remoteReady = false;
+      roleConflictDetected = false;
+      gameState = STATE_SEARCHING;
+      // Optional: reset paddles to center
+      paddleLeftY = paddleRightY = 26;
+      lastPaddleLeftY = lastPaddleRightY = 26;
+    }
+  }
+
+
   /* ===== SEND INPUT ===== */
   if (partnerFound && millis() - lastInputSend > 30) {
     sendInput(localPaddleY);
@@ -570,13 +600,13 @@ drawScores();
 
   display.display();
 
-static unsigned long lastDebug = 0;
+/*static unsigned long lastDebug = 0;
 if (millis() - lastDebug > 5000) {
   Serial.printf("State: %d | Partner: %s | Role: %s\n",
                 gameState, partnerFound ? "yes" : "no",
                 isMaster ? "MASTER" : "CLIENT");
   lastDebug = millis();
-}
+} */
 
 
 }
