@@ -21,12 +21,17 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define PADDLE_WIDTH  2
 #define LEFT_PADDLE_X  2
 #define RIGHT_PADDLE_X (SCREEN_WIDTH - 4)
+#define SCORE_TO_WIN 11
+#define BALL_SPEED_X 2
+
 
 /* ===== GAME STATE ===== */
 enum GameState {
   STATE_SEARCHING,
-  STATE_READY
+  STATE_READY,
+  STATE_PLAYING
 };
+
 
 GameState gameState = STATE_SEARCHING;
 
@@ -43,10 +48,17 @@ int paddleRightY = 26;
 unsigned long lastDiscoverySend = 0;
 unsigned long lastInputSend = 0;
 
+uint8_t scoreLeft  = 0;
+uint8_t scoreRight = 0;
+
+
 /* ===== PACKETS ===== */
 #define PKT_DISCOVERY 0x01
 #define PKT_INPUT     0x02
 #define PKT_READY 0x03
+#define PKT_STATE 0x04
+#define PKT_FORCE_READY 0x05
+
 
 
 struct DiscoveryPacket {
@@ -63,9 +75,33 @@ struct ReadyPacket {
   uint8_t type;   // PKT_READY
 };
 
+
 bool localReady  = false;
 bool remoteReady = false;
 
+struct StatePacket {
+  uint8_t type;
+  int8_t ballX;
+  int8_t ballY;
+  int8_t paddleLeftY;
+  int8_t paddleRightY;
+  uint8_t scoreLeft;
+  uint8_t scoreRight;
+};
+
+struct ForceReadyPacket {
+  uint8_t type;   // PKT_FORCE_READY
+  uint8_t scoreLeft;
+  uint8_t scoreRight;
+};
+
+
+#define BALL_SIZE 2
+
+int ballX = SCREEN_WIDTH / 2;
+int ballY = SCREEN_HEIGHT / 2;
+int ballVX = 2;
+int ballVY = 1;
 
 
 /* ===== RANDOM NONCE ===== */
@@ -122,6 +158,32 @@ if (type == PKT_READY) {
       paddleLeftY = pkt.paddleY;
     }
   }
+
+if (type == PKT_STATE && !isMaster) {
+  StatePacket pkt;
+  memcpy(&pkt, incomingData, sizeof(pkt));
+
+  ballX = pkt.ballX;
+  ballY = pkt.ballY;
+  paddleLeftY = pkt.paddleLeftY;
+  paddleRightY = pkt.paddleRightY;
+  scoreLeft = pkt.scoreLeft;
+  scoreRight = pkt.scoreRight;
+}
+
+if (type == PKT_FORCE_READY) {
+   ForceReadyPacket pkt;
+  memcpy(&pkt, incomingData, sizeof(pkt));
+  gameState = STATE_READY;
+  scoreLeft = pkt.scoreLeft;
+  scoreRight = pkt.scoreRight;
+
+  localReady  = false;
+  remoteReady = false;
+}
+
+
+
 }
 
 /* ===================================================== */
@@ -176,6 +238,75 @@ void sendReady() {
   pkt.type = PKT_READY;
   esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
 }
+
+void sendState() {
+  StatePacket pkt;
+  pkt.type = PKT_STATE;
+  pkt.ballX = ballX;
+  pkt.ballY = ballY;
+  pkt.paddleLeftY = paddleLeftY;
+  pkt.paddleRightY = paddleRightY;
+  pkt.scoreLeft = scoreLeft;
+  pkt.scoreRight = scoreRight;
+
+  esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
+}
+
+
+void drawBall() {
+  display.fillRect(ballX, ballY, BALL_SIZE, BALL_SIZE, WHITE);
+}
+
+void resetBall(bool towardLeft) {
+
+  // ----- WIN CHECK -----
+  if (scoreLeft > 10 || scoreRight > 10) {
+
+    gameState = STATE_READY;
+
+    localReady  = false;
+    remoteReady = false;
+
+    sendForceReady();
+    return;   // DO NOT spawn a new ball
+  }
+
+  // ----- NORMAL BALL RESET -----
+  ballX = SCREEN_WIDTH / 2;
+  ballY = random(10, SCREEN_HEIGHT - 10);
+
+  ballVX = towardLeft ? -BALL_SPEED_X : BALL_SPEED_X;
+  ballVY = random(-2, 3);
+  if (ballVY == 0) ballVY = 1;
+}
+
+
+void drawScores() {
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+
+  display.setCursor(12, 2);
+  display.print(scoreLeft);
+  if (isMaster){
+    display.print(" M");
+  }
+  else 
+  {
+    display.print(" C");
+  }
+
+  display.setCursor(SCREEN_WIDTH - 15, 2);
+  display.print(scoreRight);
+}
+
+void sendForceReady() {
+  ForceReadyPacket pkt;
+  pkt.type = PKT_FORCE_READY;
+  pkt.scoreLeft = scoreLeft;
+  pkt.scoreRight = scoreRight;
+  esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
+}
+
 
 
 /* ===================================================== */
@@ -250,7 +381,6 @@ void loop() {
 
   if (gameState == STATE_READY) {
     display.setCursor(50, 28);
-    display.print("Ready?");
     static bool lastBtn = HIGH;
 
 bool btn = digitalRead(BTN_PIN);
@@ -261,13 +391,39 @@ if (gameState == STATE_READY) {
     sendReady();
   }
 }
+
+if (gameState == STATE_READY) {
+  display.setCursor(50, 22);
+  display.print("Ready?");
+
+  display.setCursor(30, 34);
+  display.print(localReady ? "You: OK" : "You: --");
+
+  display.setCursor(30, 44);
+  display.print(remoteReady ? "Them: OK" : "Them: --");
+}
+
+
 if (gameState == STATE_READY) {
   if (localReady && remoteReady) {
-    display.print("Game is starting ");
-    // Placeholder for next phase
-    // Later this becomes STATE_PLAYING (master-controlled)
+
+    if (isMaster) {
+      scoreLeft  = 0;
+      scoreRight = 0;
+
+      ballX = 10;
+      ballY = SCREEN_HEIGHT / 2;
+      ballVX = BALL_SPEED_X;
+      ballVY = random(-1, 2);
+      if (ballVY == 0) ballVY = 1;
+    }
+
+    gameState = STATE_PLAYING;
   }
 }
+
+
+
 
 
 lastBtn = btn;
@@ -275,6 +431,64 @@ lastBtn = btn;
 
 
   }
+
+
+
+if (gameState == STATE_PLAYING && isMaster) {
+  ballX += ballVX;
+  ballY += ballVY;
+
+  // Bounce top/bottom
+  if (ballY <= 1 || ballY >= SCREEN_HEIGHT - BALL_SIZE - 1) {
+    ballVY = -ballVY;
+  }
+
+// ----- LEFT PADDLE -----
+if (ballVX < 0 &&
+    ballX <= LEFT_PADDLE_X + PADDLE_WIDTH &&
+    ballX >= LEFT_PADDLE_X &&
+    ballY + BALL_SIZE >= paddleLeftY &&
+    ballY <= paddleLeftY + PADDLE_HEIGHT) {
+
+  ballVX = -ballVX;
+
+  int hitPos = ballY - paddleLeftY;
+  ballVY = map(hitPos, 0, PADDLE_HEIGHT, -2, 2);
+}
+
+// ----- RIGHT PADDLE -----
+if (ballVX > 0 &&
+    ballX + BALL_SIZE >= RIGHT_PADDLE_X &&
+    ballX + BALL_SIZE <= RIGHT_PADDLE_X + PADDLE_WIDTH &&
+    ballY + BALL_SIZE >= paddleRightY &&
+    ballY <= paddleRightY + PADDLE_HEIGHT) {
+
+  ballVX = -ballVX;
+
+  int hitPos = ballY - paddleRightY;
+  ballVY = map(hitPos, 0, PADDLE_HEIGHT, -2, 2);
+}
+
+// ----- MISS LEFT -----
+if (ballX < 0) {
+  scoreRight++;
+  resetBall(true);   // toward left player (who missed)
+}
+
+// ----- MISS RIGHT -----
+if (ballX > SCREEN_WIDTH) {
+  scoreLeft++;
+  resetBall(false);  // toward right player (who missed)
+}
+
+
+  sendState();
+}
+if (gameState == STATE_PLAYING) {
+  drawBall();
+}
+drawScores();
+
 
   display.display();
 }
