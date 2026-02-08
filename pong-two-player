@@ -39,6 +39,7 @@ GameState gameState = STATE_SEARCHING;
 bool isMaster = false;
 bool partnerFound = false;
 uint8_t partnerMac[6];
+bool roleConflictDetected = false;
 
 /* ===== PADDLES ===== */
 int paddleLeftY = 26;
@@ -58,6 +59,7 @@ uint8_t scoreRight = 0;
 #define PKT_READY 0x03
 #define PKT_STATE 0x04
 #define PKT_FORCE_READY 0x05
+#define PKT_YOUARECLIENT 0x06
 
 
 
@@ -67,8 +69,9 @@ struct DiscoveryPacket {
 };
 
 struct InputPacket {
-  uint8_t type;
+  uint8_t type;           // PKT_INPUT
   int8_t paddleY;
+  uint8_t claimedMaster;  // 1 = I think I'm master, 0 = I think I'm client
 };
 
 struct ReadyPacket {
@@ -95,6 +98,10 @@ struct ForceReadyPacket {
   uint8_t scoreRight;
 };
 
+struct YouAreClient {
+  uint8_t type;   // PKT_FORCE_READY
+};
+
 
 #define BALL_SIZE 2
 
@@ -106,86 +113,114 @@ int ballVY = 1;
 
 /* ===== RANDOM NONCE ===== */
 uint8_t myNonce;
+uint8_t peerNonce = 0;
+
 
 /* ===================================================== */
 /* ================== ESP-NOW CALLBACK ================= */
 /* ===================================================== */
-
 void onDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
+  if (len < 1) return;
   uint8_t type = incomingData[0];
 
-  /* ===== DISCOVERY ===== */
-if (type == PKT_DISCOVERY && !partnerFound) {
-  DiscoveryPacket pkt;
-  memcpy(&pkt, incomingData, sizeof(pkt));
+  // Ignore discovery once we have a partner (prevents re-triggering)
+  if (type == PKT_DISCOVERY && partnerFound) 
+    {
+    Serial.println("Bogus Discovery packet received");
+    return;
+    };
+  if (type == PKT_YOUARECLIENT) {
+    if (!partnerFound) {
+      memcpy(partnerMac, mac, 6);
+      esp_now_add_peer(partnerMac, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
+    }
+    partnerFound = true;
+    isMaster = false;
+    gameState = STATE_READY;
+    Serial.println("Received YOUARECLIENT → forced to CLIENT role");
+    return;
+  }
 
-  memcpy(partnerMac, mac, 6);
-  partnerFound = true;
+  if (type == PKT_DISCOVERY && !partnerFound) {
+    DiscoveryPacket pkt;
+    memcpy(&pkt, incomingData, sizeof(pkt));
 
-  // If we RECEIVED first, we are master
-  isMaster = true;
+    memcpy(partnerMac, mac, 6);
+    esp_now_add_peer(partnerMac, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
 
-  esp_now_add_peer(partnerMac, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
+    // I received first → I become MASTER and tell the other to be client
+    isMaster = true;
+    partnerFound = true;
+    gameState = STATE_READY;
 
-  // Acknowledge discovery back to sender
-  esp_now_send(partnerMac, incomingData, sizeof(pkt));
+    // Immediately force the sender to client role
+    YouAreClient force;
+    force.type = PKT_YOUARECLIENT;
+    esp_now_send(partnerMac, (uint8_t*)&force, sizeof(force));
 
-  gameState = STATE_READY;
-}
-else if (type == PKT_DISCOVERY && !partnerFound) {
-  // This device SENT first, so it becomes client
-  memcpy(partnerMac, mac, 6);
-  partnerFound = true;
-  isMaster = false;
-
-  esp_now_add_peer(partnerMac, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
-  gameState = STATE_READY;
-}
+    Serial.printf("Received discovery first → I am MASTER (sent YouAreClient)\n");
+    Serial.printf("  Partner MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+    return;
+  }
 
 if (type == PKT_READY) {
   remoteReady = true;
+  Serial.printf("Received PKT_READY from partner! remoteReady now true (sender MAC: %02X:%02X:...)\n",
+                mac[0], mac[1]);
+  return;
 }
 
-
-  /* ===== INPUT ===== */
   if (type == PKT_INPUT && partnerFound) {
     InputPacket pkt;
     memcpy(&pkt, incomingData, sizeof(pkt));
 
-    if (isMaster) {
-      paddleRightY = pkt.paddleY;
-    } else {
-      paddleLeftY = pkt.paddleY;
+    // Role conflict check
+    bool peerClaimsMaster = (pkt.claimedMaster == 1);
+    if (peerClaimsMaster == isMaster) {
+      // Both claim same role → conflict!
+      roleConflictDetected = true;
+      Serial.println("ROLE CONFLICT DETECTED — both think same role! Resetting...");
+      // Fall through to reset logic below
     }
+
+    // Apply paddle if no conflict
+    if (!roleConflictDetected) {
+      if (isMaster) {
+        paddleRightY = pkt.paddleY;
+      } else {
+        paddleLeftY = pkt.paddleY;
+      }
+    }
+    return;
   }
 
-if (type == PKT_STATE && !isMaster) {
-  StatePacket pkt;
-  memcpy(&pkt, incomingData, sizeof(pkt));
+  if (type == PKT_STATE) {
+    if (isMaster) {
+      Serial.println("Error: Received STATE as Master");
+    } else {
+      StatePacket pkt;
+      memcpy(&pkt, incomingData, sizeof(pkt));
+      ballX        = pkt.ballX;
+      ballY        = pkt.ballY;
+      paddleLeftY  = pkt.paddleLeftY;
+      paddleRightY = pkt.paddleRightY;
+      scoreLeft    = pkt.scoreLeft;
+      scoreRight   = pkt.scoreRight;
+    }
+    return;
+  }
 
-  ballX = pkt.ballX;
-  ballY = pkt.ballY;
-  paddleLeftY = pkt.paddleLeftY;
-  paddleRightY = pkt.paddleRightY;
-  scoreLeft = pkt.scoreLeft;
-  scoreRight = pkt.scoreRight;
+  if (type == PKT_FORCE_READY) {
+    ForceReadyPacket pkt;
+    memcpy(&pkt, incomingData, sizeof(pkt));
+    gameState = STATE_READY;
+    scoreLeft  = pkt.scoreLeft;
+    scoreRight = pkt.scoreRight;
+    localReady = remoteReady = false;
+    return;
+  }
 }
-
-if (type == PKT_FORCE_READY) {
-   ForceReadyPacket pkt;
-  memcpy(&pkt, incomingData, sizeof(pkt));
-  gameState = STATE_READY;
-  scoreLeft = pkt.scoreLeft;
-  scoreRight = pkt.scoreRight;
-
-  localReady  = false;
-  remoteReady = false;
-}
-
-
-
-}
-
 /* ===================================================== */
 /* ================== ESP-NOW SEND ===================== */
 /* ===================================================== */
@@ -201,8 +236,9 @@ void sendDiscovery() {
 
 void sendInput(int paddleY) {
   InputPacket pkt;
-  pkt.type = PKT_INPUT;
-  pkt.paddleY = paddleY;
+  pkt.type         = PKT_INPUT;
+  pkt.paddleY      = paddleY;
+  pkt.claimedMaster = isMaster ? 1 : 0;
 
   esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
 }
@@ -316,10 +352,16 @@ void sendForceReady() {
 void setup() {
   pinMode(BTN_PIN, INPUT_PULLUP);
 
-  Serial.begin(115200);
+  Serial.begin(9600);
+  delay(2000);               // give USB time to enumerate
+  Serial.println("\n\n===== ESP8266 Pong starting =====");
+  Serial.flush();           // force send
 
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
+ WiFi.mode(WIFI_STA);
+WiFi.disconnect();
+delay(100);
+
+
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     for (;;);
@@ -338,6 +380,10 @@ void setup() {
 
   randomSeed(ESP.getChipId());
   myNonce = random(1, 255);
+      Serial.print("My nonce = ");
+    Serial.println(myNonce);
+    // in setup, after myNonce print:
+Serial.println("Discovery broadcasts every ~800 ms until partner found");
 }
 
 /* ===================================================== */
@@ -346,15 +392,24 @@ void setup() {
 
 void loop() {
 
-  /* ===== READ LOCAL PADDLE ===== */
-  int localPaddleY = readPaddleY();
+/* ===== READ LOCAL PADDLE ===== */
+int localPaddleY = readPaddleY();
 
-  if (isMaster) {
-    paddleLeftY = localPaddleY;
-  } else {
-    paddleRightY = localPaddleY;
-  }
+if (isMaster) {
+  paddleLeftY = localPaddleY;
+} else {
+  paddleRightY = localPaddleY;
+}
 
+// Check for detected conflict (from incoming INPUT)
+if (roleConflictDetected && partnerFound) {
+  partnerFound = false;
+  roleConflictDetected = false;
+  gameState = STATE_SEARCHING;
+  localReady = remoteReady = false;
+  // Optional: clear peer list if you want (but not strictly needed)
+  Serial.println("Conflict reset → back to Searching");
+}
   /* ===== SEND INPUT ===== */
   if (partnerFound && millis() - lastInputSend > 30) {
     sendInput(localPaddleY);
@@ -362,46 +417,55 @@ void loop() {
   }
 
   /* ===== DISCOVERY ===== */
-  if (!partnerFound && millis() - lastDiscoverySend > 500) {
-    sendDiscovery();
-    lastDiscoverySend = millis();
-  }
+if (!partnerFound && millis() - lastDiscoverySend > 800) {  // was 500
+  sendDiscovery();
+  lastDiscoverySend = millis();
+Serial.println("Discovery packet sent");
+}
 
   /* ===== DISPLAY ===== */
-  display.clearDisplay();
-  drawPlayfield();
-  drawPaddles();
+/* ===== DISPLAY ===== */
+display.clearDisplay();
+drawPlayfield();
+drawPaddles();   // always draw paddles — looks nice even in ready state
 
-  if (gameState == STATE_SEARCHING) {
-    display.setCursor(20, 28);
-    display.setTextSize(1);
-    display.setTextColor(WHITE);
-    display.print("Searching...");
-  }
-
-  if (gameState == STATE_READY) {
-    display.setCursor(50, 28);
-    static bool lastBtn = HIGH;
-
-bool btn = digitalRead(BTN_PIN);
-
-if (gameState == STATE_READY) {
-  if (lastBtn == HIGH && btn == LOW && !localReady) {
-    localReady = true;
-    sendReady();
-  }
+if (gameState == STATE_SEARCHING) {
+  display.setCursor(20, 28);
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.print("Searching...");
 }
 
 if (gameState == STATE_READY) {
+  // Button handling — always run when in READY
+  static bool lastBtn = HIGH;
+  bool btn = digitalRead(BTN_PIN);
+
+  if (lastBtn == HIGH && btn == LOW && !localReady) {
+    localReady = true;
+    sendReady();
+    Serial.println("Local ready pressed & sent PKT_READY");
+  }
+  lastBtn = btn;
+
+  // Draw ready screen elements
   display.setCursor(50, 22);
   display.print("Ready?");
 
   display.setCursor(30, 34);
-  display.print(localReady ? "You: OK" : "You: --");
+  display.print(localReady  ? "You: OK" : "You: --");
 
   display.setCursor(30, 44);
   display.print(remoteReady ? "Them: OK" : "Them: --");
+
 }
+
+if (gameState == STATE_PLAYING) {
+  drawBall();
+}
+
+// Scores can be shown in READY too (helps debugging)
+drawScores();
 
 
 if (gameState == STATE_READY) {
@@ -426,11 +490,7 @@ if (gameState == STATE_READY) {
 
 
 
-lastBtn = btn;
 
-
-
-  }
 
 
 
@@ -491,4 +551,14 @@ drawScores();
 
 
   display.display();
+
+static unsigned long lastDebug = 0;
+if (millis() - lastDebug > 5000) {
+  Serial.printf("State: %d | Partner: %s | Role: %s\n",
+                gameState, partnerFound ? "yes" : "no",
+                isMaster ? "MASTER" : "CLIENT");
+  lastDebug = millis();
+}
+
+
 }
