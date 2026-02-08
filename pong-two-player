@@ -1,0 +1,280 @@
+
+#include <ESP8266WiFi.h>
+#include <espnow.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+/* ===== OLED ===== */
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+#define D7 13   // fire button
+
+/* ===== INPUT ===== */
+#define BTN_PIN D7
+#define JOY_PIN A0
+
+/* ===== GAME CONSTANTS ===== */
+#define PADDLE_HEIGHT 12
+#define PADDLE_WIDTH  2
+#define LEFT_PADDLE_X  2
+#define RIGHT_PADDLE_X (SCREEN_WIDTH - 4)
+
+/* ===== GAME STATE ===== */
+enum GameState {
+  STATE_SEARCHING,
+  STATE_READY
+};
+
+GameState gameState = STATE_SEARCHING;
+
+/* ===== ROLE ===== */
+bool isMaster = false;
+bool partnerFound = false;
+uint8_t partnerMac[6];
+
+/* ===== PADDLES ===== */
+int paddleLeftY = 26;
+int paddleRightY = 26;
+
+/* ===== TIMING ===== */
+unsigned long lastDiscoverySend = 0;
+unsigned long lastInputSend = 0;
+
+/* ===== PACKETS ===== */
+#define PKT_DISCOVERY 0x01
+#define PKT_INPUT     0x02
+#define PKT_READY 0x03
+
+
+struct DiscoveryPacket {
+  uint8_t type;
+  uint8_t nonce;
+};
+
+struct InputPacket {
+  uint8_t type;
+  int8_t paddleY;
+};
+
+struct ReadyPacket {
+  uint8_t type;   // PKT_READY
+};
+
+bool localReady  = false;
+bool remoteReady = false;
+
+
+
+/* ===== RANDOM NONCE ===== */
+uint8_t myNonce;
+
+/* ===================================================== */
+/* ================== ESP-NOW CALLBACK ================= */
+/* ===================================================== */
+
+void onDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
+  uint8_t type = incomingData[0];
+
+  /* ===== DISCOVERY ===== */
+if (type == PKT_DISCOVERY && !partnerFound) {
+  DiscoveryPacket pkt;
+  memcpy(&pkt, incomingData, sizeof(pkt));
+
+  memcpy(partnerMac, mac, 6);
+  partnerFound = true;
+
+  // If we RECEIVED first, we are master
+  isMaster = true;
+
+  esp_now_add_peer(partnerMac, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
+
+  // Acknowledge discovery back to sender
+  esp_now_send(partnerMac, incomingData, sizeof(pkt));
+
+  gameState = STATE_READY;
+}
+else if (type == PKT_DISCOVERY && !partnerFound) {
+  // This device SENT first, so it becomes client
+  memcpy(partnerMac, mac, 6);
+  partnerFound = true;
+  isMaster = false;
+
+  esp_now_add_peer(partnerMac, ESP_NOW_ROLE_COMBO, 1, NULL, 0);
+  gameState = STATE_READY;
+}
+
+if (type == PKT_READY) {
+  remoteReady = true;
+}
+
+
+  /* ===== INPUT ===== */
+  if (type == PKT_INPUT && partnerFound) {
+    InputPacket pkt;
+    memcpy(&pkt, incomingData, sizeof(pkt));
+
+    if (isMaster) {
+      paddleRightY = pkt.paddleY;
+    } else {
+      paddleLeftY = pkt.paddleY;
+    }
+  }
+}
+
+/* ===================================================== */
+/* ================== ESP-NOW SEND ===================== */
+/* ===================================================== */
+
+void sendDiscovery() {
+  DiscoveryPacket pkt;
+  pkt.type = PKT_DISCOVERY;
+  pkt.nonce = myNonce;
+
+  uint8_t broadcastAddr[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+  esp_now_send(broadcastAddr, (uint8_t*)&pkt, sizeof(pkt));
+}
+
+void sendInput(int paddleY) {
+  InputPacket pkt;
+  pkt.type = PKT_INPUT;
+  pkt.paddleY = paddleY;
+
+  esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
+}
+
+/* ===================================================== */
+/* ================== DISPLAY ========================== */
+/* ===================================================== */
+
+void drawPlayfield() {
+  display.drawLine(0, 0, SCREEN_WIDTH, 0, WHITE);
+  display.drawLine(0, SCREEN_HEIGHT - 1, SCREEN_WIDTH, SCREEN_HEIGHT - 1, WHITE);
+}
+
+void drawPaddles() {
+  display.fillRect(LEFT_PADDLE_X, paddleLeftY, PADDLE_WIDTH, PADDLE_HEIGHT, WHITE);
+  display.fillRect(RIGHT_PADDLE_X, paddleRightY, PADDLE_WIDTH, PADDLE_HEIGHT, WHITE);
+}
+
+/* ===================================================== */
+/* ================== INPUT ============================ */
+/* ===================================================== */
+
+int readPaddleY() {
+  int raw = analogRead(JOY_PIN);
+  raw = 1023 - raw; // invert
+  int y = map(raw, 0, 1023, 1, SCREEN_HEIGHT - PADDLE_HEIGHT - 1);
+  return y;
+}
+
+/* helpers*/
+void sendReady() {
+  ReadyPacket pkt;
+  pkt.type = PKT_READY;
+  esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
+}
+
+
+/* ===================================================== */
+/* ================== SETUP ============================ */
+/* ===================================================== */
+
+void setup() {
+  pinMode(BTN_PIN, INPUT_PULLUP);
+
+  Serial.begin(115200);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    for (;;);
+  }
+
+  display.clearDisplay();
+  display.display();
+
+  if (esp_now_init() != 0) {
+    Serial.println("ESP-NOW init failed");
+    return;
+  }
+
+  esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
+  esp_now_register_recv_cb(onDataRecv);
+
+  randomSeed(ESP.getChipId());
+  myNonce = random(1, 255);
+}
+
+/* ===================================================== */
+/* ================== LOOP ============================= */
+/* ===================================================== */
+
+void loop() {
+
+  /* ===== READ LOCAL PADDLE ===== */
+  int localPaddleY = readPaddleY();
+
+  if (isMaster) {
+    paddleLeftY = localPaddleY;
+  } else {
+    paddleRightY = localPaddleY;
+  }
+
+  /* ===== SEND INPUT ===== */
+  if (partnerFound && millis() - lastInputSend > 30) {
+    sendInput(localPaddleY);
+    lastInputSend = millis();
+  }
+
+  /* ===== DISCOVERY ===== */
+  if (!partnerFound && millis() - lastDiscoverySend > 500) {
+    sendDiscovery();
+    lastDiscoverySend = millis();
+  }
+
+  /* ===== DISPLAY ===== */
+  display.clearDisplay();
+  drawPlayfield();
+  drawPaddles();
+
+  if (gameState == STATE_SEARCHING) {
+    display.setCursor(20, 28);
+    display.setTextSize(1);
+    display.setTextColor(WHITE);
+    display.print("Searching...");
+  }
+
+  if (gameState == STATE_READY) {
+    display.setCursor(50, 28);
+    display.print("Ready?");
+    static bool lastBtn = HIGH;
+
+bool btn = digitalRead(BTN_PIN);
+
+if (gameState == STATE_READY) {
+  if (lastBtn == HIGH && btn == LOW && !localReady) {
+    localReady = true;
+    sendReady();
+  }
+}
+if (gameState == STATE_READY) {
+  if (localReady && remoteReady) {
+    display.print("Game is starting ");
+    // Placeholder for next phase
+    // Later this becomes STATE_PLAYING (master-controlled)
+  }
+}
+
+
+lastBtn = btn;
+
+
+
+  }
+
+  display.display();
+}
