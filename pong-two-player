@@ -15,6 +15,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 /* ===== INPUT ===== */
 #define BTN_PIN D7
 #define JOY_PIN A0
+#define BUZZER_PIN 12  // D6
 
 /* ===== GAME CONSTANTS ===== */
 #define PADDLE_HEIGHT 12
@@ -51,6 +52,14 @@ int paddleRightY = 26;
 int lastPaddleLeftY = 26;   // ← ADD THESE
 int lastPaddleRightY = 26;  // ← FOR MASTER TRACKING
 
+/* ===== SOUND STATE ===== */
+bool soundActive = false;
+unsigned long soundEndTime = 0;
+int currentSoundFreq = 0;
+uint8_t triggered_sound=0;
+int shockwavesound=0; // not used but refrenced in sound helper
+
+
 /* ===== TIMING ===== */
 unsigned long lastDiscoverySend = 0;
 unsigned long lastInputSend = 0;
@@ -67,6 +76,9 @@ uint8_t scoreRight = 0;
 #define PKT_FORCE_READY 0x05
 #define PKT_YOUARECLIENT 0x06
 
+/* sound triggers*/
+#define TRIGGER_SOUND_NONE 0x00
+#define TRIGGER_SOUND_BOUNCE 0x01
 
 
 struct DiscoveryPacket {
@@ -96,6 +108,7 @@ struct StatePacket {
   int8_t paddleRightY;
   uint8_t scoreLeft;
   uint8_t scoreRight;
+  uint8_t sound_trigger;
 };
 
 struct ForceReadyPacket {
@@ -225,6 +238,8 @@ if (type == PKT_READY) {
       paddleRightY = pkt.paddleRightY;
       scoreLeft    = pkt.scoreLeft;
       scoreRight   = pkt.scoreRight;
+      process_sound_trigger(pkt.sound_trigger);
+      
     }
     return;
   }
@@ -302,8 +317,10 @@ void sendState() {
   pkt.paddleRightY = paddleRightY;
   pkt.scoreLeft = scoreLeft;
   pkt.scoreRight = scoreRight;
+  pkt.sound_trigger=triggered_sound;
 
   esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
+  triggered_sound=TRIGGER_SOUND_NONE; // only sendthe triggerd sound once. 
 }
 
 
@@ -361,7 +378,46 @@ void sendForceReady() {
   esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
 }
 
+/* sound functions */
 
+void startSound(int freq, unsigned long durationMs) {
+  if (soundActive) return;   // don't interrupt existing sound
+
+  currentSoundFreq = freq;
+  soundEndTime = millis() + durationMs;
+  soundActive = true;
+
+  tone(BUZZER_PIN, freq);
+}
+
+void fireSound() {
+  startSound(2200, 40);   // short, sharp laser
+  triggered_sound=TRIGGER_SOUND_BOUNCE;
+}
+
+void updateSound() {
+  if (shockwavesound>0) {
+    // Static / buzz effect
+    int jitter = random(-100, 300);
+    tone(BUZZER_PIN, 600 + jitter);
+  };
+
+
+  if (soundActive && millis() >= soundEndTime) {
+    noTone(BUZZER_PIN);
+    soundActive = false;
+    shockwavesound=0;
+  }
+}
+
+void process_sound_trigger(uint8_t trigger){
+ if (TRIGGER_SOUND_NONE == trigger){return;};
+ if (TRIGGER_SOUND_BOUNCE == trigger){
+   fireSound();
+  return;
+ }
+
+}
 
 /* ===================================================== */
 /* ================== SETUP ============================ */
@@ -369,6 +425,7 @@ void sendForceReady() {
 
 void setup() {
   pinMode(BTN_PIN, INPUT_PULLUP);
+  pinMode(BUZZER_PIN, OUTPUT);
 
   Serial.begin(9600);
   //delay(2000);               // give USB time to enumerate
@@ -549,8 +606,10 @@ if (gameState == STATE_PLAYING && isMaster) {
     ballVY += leftPaddleVY * 0.6f;  // 0.6 = tunable factor (try 0.4-0.8)
     ballVY = constrain(ballVY, -4, 4);  // Clamp to sane speeds
 
+    fireSound();
     Serial.print("Left hit! paddleVY="); Serial.print(leftPaddleVY);
     Serial.print(" new ballVY="); Serial.println(ballVY);  // Debug (remove later)
+  
   }
 
   // ----- RIGHT PADDLE COLLISION (ENHANCED) -----
@@ -568,6 +627,7 @@ if (gameState == STATE_PLAYING && isMaster) {
     // ← ADD: Apply paddle motion to ball
     ballVY += rightPaddleVY * 0.6f;  // Same factor
     ballVY = constrain(ballVY, -4, 4);  // Clamp
+    fireSound();
 
     Serial.print("Right hit! paddleVY="); Serial.print(rightPaddleVY);
     Serial.print(" new ballVY="); Serial.println(ballVY);  // Debug (remove later)
@@ -599,6 +659,7 @@ drawScores();
 
 
   display.display();
+  updateSound();
 
 /*static unsigned long lastDebug = 0;
 if (millis() - lastDebug > 5000) {
