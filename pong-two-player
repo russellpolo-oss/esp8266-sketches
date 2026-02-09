@@ -79,6 +79,7 @@ uint8_t scoreRight = 0;
 /* sound triggers*/
 #define TRIGGER_SOUND_NONE 0x00
 #define TRIGGER_SOUND_BOUNCE 0x01
+#define TRIGGER_SOUND_MISS 0x02
 
 
 struct DiscoveryPacket {
@@ -395,6 +396,12 @@ void fireSound() {
   triggered_sound=TRIGGER_SOUND_BOUNCE;
 }
 
+void missSound() {
+  startSound(42, 800);   // low buzz
+  triggered_sound=TRIGGER_SOUND_MISS;
+}
+
+
 void updateSound() {
   if (shockwavesound>0) {
     // Static / buzz effect
@@ -636,12 +643,14 @@ if (gameState == STATE_PLAYING && isMaster) {
   // ----- MISS LEFT -----
   if (ballX < 0) {
     scoreRight++;
+    missSound();
     resetBall(true);
   }
 
   // ----- MISS RIGHT -----
   if (ballX > SCREEN_WIDTH) {
     scoreLeft++;
+    missSound();
     resetBall(false);
   }
 
