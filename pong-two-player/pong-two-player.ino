@@ -25,6 +25,8 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define RIGHT_PADDLE_X (SCREEN_WIDTH - 4)
 #define SCORE_TO_WIN 11
 #define BALL_SPEED_X 2
+#define PADDLE_MOTION_INFLUENCE 0.6f  // tunable factor for how much paddle motion affects ball
+#define vlimit(v)   constrain((v), -4, 4)
 
 /* ===== TIMING (add this new one) ===== */
 unsigned long lastPacketFromPartner = 0;   // updated every time ANY packet arrives from partner
@@ -64,7 +66,7 @@ int paddleLeftY = 26;
 int paddleRightY = 26;
 int lastPaddleLeftY = 26;   // ← ADD THESE
 int lastPaddleRightY = 26;  // ← FOR MASTER TRACKING
-#define PADDLE_MOTION_INFLUENCE 0.6f  // tunable factor for how much paddle motion affects ball
+
 
 
 
@@ -594,7 +596,7 @@ if (gameState == STATE_PLAYING && isMaster) {
         
         // ← ADD: Apply paddle motion to ball
         ballVY += leftPaddleVY * PADDLE_MOTION_INFLUENCE;  // 0.6 = tunable factor (try 0.4-0.8)
-        ballVY = constrain(ballVY, -4, 4);  // Clamp to sane speeds
+        ballVY = vlimit(ballVY);  // Clamp to sane speeds
 
         fireSound();
         Serial.print("Left hit! paddleVY="); Serial.print(leftPaddleVY);
@@ -615,7 +617,7 @@ if (gameState == STATE_PLAYING && isMaster) {
         
         // ← ADD: Apply paddle motion to ball
         ballVY += rightPaddleVY * PADDLE_MOTION_INFLUENCE;  // Same factor
-        ballVY = constrain(ballVY, -4, 4);  // Clamp
+        ballVY = vlimit(ballVY);  // Clamp
         fireSound();
 
         Serial.print("Right hit! paddleVY="); Serial.print(rightPaddleVY);
@@ -653,7 +655,7 @@ if (gameState == STATE_PLAYING && isMaster) {
         ballVY = 0;
         // apply paddle motion to ball
         ballVY += leftPaddleVY * PADDLE_MOTION_INFLUENCE;  // tunable factor
-        ballVY = constrain(ballVY, -4, 4);  // clamp
+        ballVY = vlimit(ballVY);  // clamp
       }
       break;
 
@@ -672,7 +674,7 @@ if (gameState == STATE_PLAYING && isMaster) {
       ballVY = 0;
       // apply paddle motion to ball
       ballVY += rightPaddleVY * PADDLE_MOTION_INFLUENCE;  // same factor
-      ballVY = constrain(ballVY, -4, 4);  // clamp
+      ballVY = vlimit(ballVY);  // clamp
       break;
   }
   sendState();
