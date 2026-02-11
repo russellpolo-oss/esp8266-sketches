@@ -14,9 +14,9 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define D7 13   // fire button
 
 /* ===== INPUT ===== */
-#define BTN_PIN D7
-#define JOY_PIN A0
-#define BUZZER_PIN 12  // D6
+#define BTN_PIN D7 // fire button , better name 
+#define JOY_PIN A0  // analog joystick vertical axis
+
 
 /* ===== GAME CONSTANTS ===== */
 #define PADDLE_HEIGHT 12
@@ -40,6 +40,18 @@ enum GameState {
 
 GameState gameState = STATE_SEARCHING;
 
+/* ===== Ball STATE ===== */
+enum BallState {
+  BALLINPLAY,
+  WAITINGFORSERVE_LEFT,
+  WAITINGFORSERVE_RIGHT,
+  CLIENT_SERVING
+};
+
+
+
+BallState ballState = BALLINPLAY;
+
 /* ===== ROLE ===== */
 bool isMaster = false;
 bool partnerFound = false;
@@ -52,6 +64,7 @@ int paddleLeftY = 26;
 int paddleRightY = 26;
 int lastPaddleLeftY = 26;   // ← ADD THESE
 int lastPaddleRightY = 26;  // ← FOR MASTER TRACKING
+#define PADDLE_MOTION_INFLUENCE 0.6f  // tunable factor for how much paddle motion affects ball
 
 
 
@@ -85,6 +98,7 @@ struct InputPacket {
   uint8_t type;           // PKT_INPUT
   int8_t paddleY;
   uint8_t claimedMaster;  // 1 = I think I'm master, 0 = I think I'm client
+  uint8_t click; // used for client to tell master when it's ready to serve.
 };
 
 struct ReadyPacket {
@@ -219,6 +233,13 @@ if (type == PKT_READY) {
         paddleLeftY = pkt.paddleY;
       }
     }
+    if (ballState==WAITINGFORSERVE_RIGHT) {
+      if (pkt.click==1) {
+        // the client is serving, so we can start the ball moving. 
+        ballState=CLIENT_SERVING;
+        Serial.println("Received click from client → starting serve!");
+      }
+    } 
     return;
   }
 
@@ -269,6 +290,7 @@ void sendInput(int paddleY) {
   pkt.type         = PKT_INPUT;
   pkt.paddleY      = paddleY;
   pkt.claimedMaster = isMaster ? 1 : 0;
+  pkt.click = (digitalRead(BTN_PIN) == LOW ) ? 1 : 0; // tell master I am serving.
 
   esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
 }
@@ -480,7 +502,6 @@ if (!partnerFound && millis() - lastDiscoverySend > 800) {  // was 500
 Serial.println("Discovery packet sent");
 }
 
-  /* ===== DISPLAY ===== */
 /* ===== DISPLAY ===== */
 display.clearDisplay();
 drawPlayfield();
@@ -549,71 +570,111 @@ if (gameState == STATE_PLAYING && isMaster) {
   int leftPaddleVY  = paddleLeftY  - lastPaddleLeftY;
   int rightPaddleVY = paddleRightY - lastPaddleRightY;
 
-  ballX += ballVX;
-  ballY += ballVY;
+  switch (ballState) {
+    case BALLINPLAY:
+      ballX += ballVX;
+      ballY += ballVY;
 
-  // Bounce top/bottom
-  if (ballY <= 1 || ballY >= SCREEN_HEIGHT - BALL_SIZE - 1) {
-    ballVY = -ballVY;
+      // Bounce top/bottom
+      if (ballY <= 1 || ballY >= SCREEN_HEIGHT - BALL_SIZE - 1) {
+        ballVY = -ballVY;
+      }
+
+      // ----- LEFT PADDLE COLLISION (ENHANCED) -----
+      if (ballVX < 0 &&
+          ballX <= LEFT_PADDLE_X + PADDLE_WIDTH &&
+          ballX >= LEFT_PADDLE_X &&
+          ballY + BALL_SIZE >= paddleLeftY &&
+          ballY <= paddleLeftY + PADDLE_HEIGHT) {
+
+        ballVX = -ballVX;
+
+        int hitPos = ballY - paddleLeftY;
+        ballVY = map(hitPos, 0, PADDLE_HEIGHT, -2, 2);
+        
+        // ← ADD: Apply paddle motion to ball
+        ballVY += leftPaddleVY * PADDLE_MOTION_INFLUENCE;  // 0.6 = tunable factor (try 0.4-0.8)
+        ballVY = constrain(ballVY, -4, 4);  // Clamp to sane speeds
+
+        fireSound();
+        Serial.print("Left hit! paddleVY="); Serial.print(leftPaddleVY);
+        Serial.print(" new ballVY="); Serial.println(ballVY);  // Debug (remove later)
+      }
+
+      // ----- RIGHT PADDLE COLLISION (ENHANCED) -----
+      if (ballVX > 0 &&
+          ballX + BALL_SIZE >= RIGHT_PADDLE_X &&
+          ballX + BALL_SIZE <= RIGHT_PADDLE_X + PADDLE_WIDTH &&
+          ballY + BALL_SIZE >= paddleRightY &&
+          ballY <= paddleRightY + PADDLE_HEIGHT) {
+
+        ballVX = -ballVX;
+
+        int hitPos = ballY - paddleRightY;
+        ballVY = map(hitPos, 0, PADDLE_HEIGHT, -2, 2);
+        
+        // ← ADD: Apply paddle motion to ball
+        ballVY += rightPaddleVY * PADDLE_MOTION_INFLUENCE;  // Same factor
+        ballVY = constrain(ballVY, -4, 4);  // Clamp
+        fireSound();
+
+        Serial.print("Right hit! paddleVY="); Serial.print(rightPaddleVY);
+        Serial.print(" new ballVY="); Serial.println(ballVY);  // Debug (remove later)
+      }
+
+      // ----- MISS LEFT -----
+      if (ballX < 0) {
+        scoreRight++;
+        missSound();
+        ballState = WAITINGFORSERVE_RIGHT;  // wait for client to serve
+        resetBall(true);
+      }
+
+      // ----- MISS RIGHT -----
+      if (ballX > SCREEN_WIDTH) {
+        scoreLeft++;
+        missSound();
+        ballState = WAITINGFORSERVE_LEFT;  // waiting for mater 
+        resetBall(false);
+      }
+      break;
+
+    case WAITINGFORSERVE_LEFT:
+      // Stick the ball to the left paddle
+      ballX = LEFT_PADDLE_X + PADDLE_WIDTH + 1;
+      ballY = paddleLeftY + (PADDLE_HEIGHT / 2) - (BALL_SIZE / 2);
+      
+      if (digitalRead(BTN_PIN) == LOW) {
+        // the master is serving, so we can start the ball moving. 
+        ballState = BALLINPLAY;
+        Serial.println("Master serve started!");
+        // start ball moving right +include influence of paddle motion
+        ballVX = BALL_SPEED_X;
+        ballVY = 0;
+        // apply paddle motion to ball
+        ballVY += leftPaddleVY * PADDLE_MOTION_INFLUENCE;  // tunable factor
+        ballVY = constrain(ballVY, -4, 4);  // clamp
+      }
+      break;
+
+    case WAITINGFORSERVE_RIGHT:
+      // Stick the ball to the right paddle
+      ballX = RIGHT_PADDLE_X - BALL_SIZE - 1;
+      ballY = paddleRightY + (PADDLE_HEIGHT / 2) - (BALL_SIZE / 2);
+      break;
+
+    case CLIENT_SERVING:
+      // the client has indicated it's ready to serve, so we can start the ball moving.
+      ballState = BALLINPLAY;
+      Serial.println("Client serve started!");
+      // start ball moving left +include influence of paddle motion
+      ballVX = -BALL_SPEED_X;
+      ballVY = 0;
+      // apply paddle motion to ball
+      ballVY += rightPaddleVY * PADDLE_MOTION_INFLUENCE;  // same factor
+      ballVY = constrain(ballVY, -4, 4);  // clamp
+      break;
   }
-
-  // ----- LEFT PADDLE COLLISION (ENHANCED) -----
-  if (ballVX < 0 &&
-      ballX <= LEFT_PADDLE_X + PADDLE_WIDTH &&
-      ballX >= LEFT_PADDLE_X &&
-      ballY + BALL_SIZE >= paddleLeftY &&
-      ballY <= paddleLeftY + PADDLE_HEIGHT) {
-
-    ballVX = -ballVX;
-
-    int hitPos = ballY - paddleLeftY;
-    ballVY = map(hitPos, 0, PADDLE_HEIGHT, -2, 2);
-    
-    // ← ADD: Apply paddle motion to ball
-    ballVY += leftPaddleVY * 0.6f;  // 0.6 = tunable factor (try 0.4-0.8)
-    ballVY = constrain(ballVY, -4, 4);  // Clamp to sane speeds
-
-    fireSound();
-    Serial.print("Left hit! paddleVY="); Serial.print(leftPaddleVY);
-    Serial.print(" new ballVY="); Serial.println(ballVY);  // Debug (remove later)
-  
-  }
-
-  // ----- RIGHT PADDLE COLLISION (ENHANCED) -----
-  if (ballVX > 0 &&
-      ballX + BALL_SIZE >= RIGHT_PADDLE_X &&
-      ballX + BALL_SIZE <= RIGHT_PADDLE_X + PADDLE_WIDTH &&
-      ballY + BALL_SIZE >= paddleRightY &&
-      ballY <= paddleRightY + PADDLE_HEIGHT) {
-
-    ballVX = -ballVX;
-
-    int hitPos = ballY - paddleRightY;
-    ballVY = map(hitPos, 0, PADDLE_HEIGHT, -2, 2);
-    
-    // ← ADD: Apply paddle motion to ball
-    ballVY += rightPaddleVY * 0.6f;  // Same factor
-    ballVY = constrain(ballVY, -4, 4);  // Clamp
-    fireSound();
-
-    Serial.print("Right hit! paddleVY="); Serial.print(rightPaddleVY);
-    Serial.print(" new ballVY="); Serial.println(ballVY);  // Debug (remove later)
-  }
-
-  // ----- MISS LEFT -----
-  if (ballX < 0) {
-    scoreRight++;
-    missSound();
-    resetBall(true);
-  }
-
-  // ----- MISS RIGHT -----
-  if (ballX > SCREEN_WIDTH) {
-    scoreLeft++;
-    missSound();
-    resetBall(false);
-  }
-
   sendState();
 
   // ← ADD: Update last positions for NEXT frame

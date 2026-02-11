@@ -1,4 +1,4 @@
-
+#define BUZZER_PIN 12  // D6
 
 /* sound triggers*/
 #define TRIGGER_SOUND_NONE 0x00
