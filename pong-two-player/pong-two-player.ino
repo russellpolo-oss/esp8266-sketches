@@ -15,7 +15,7 @@
 /* ================== DISPLAY ========================== */
 /* ===================================================== */
 
-void drawPlayfield() {
+void drawPlayfield_pong() {
   display.drawLine(0, 0, SCREEN_WIDTH, 0, WHITE);
   display.drawLine(0, SCREEN_HEIGHT - 1, SCREEN_WIDTH, SCREEN_HEIGHT - 1, WHITE);
 }
@@ -77,7 +77,7 @@ void resetBall(bool towardLeft) {
 }
 
 
-void drawScores() {
+void drawScores_pong() {
   display.setTextSize(1);
   display.setTextColor(WHITE);
 
@@ -193,7 +193,7 @@ Serial.println("Discovery packet sent");
 
 /* ===== DISPLAY ===== */
 display.clearDisplay();
-drawPlayfield();
+drawPlayfield_pong();
 drawPaddles();   // always draw paddles — looks nice even in ready state
 
 if (gameState == STATE_SEARCHING) {
@@ -232,7 +232,7 @@ if (gameState == STATE_PLAYING) {
 }
 
 // Scores can be shown in READY too (helps debugging)
-drawScores();
+drawScores_pong();
 
 
 if (gameState == STATE_READY) {
@@ -374,7 +374,7 @@ if (gameState == STATE_PLAYING && isMaster) {
 if (gameState == STATE_PLAYING) {
   drawBall();
 }
-drawScores();
+drawScores_pong();
 
 
   display.display();

@@ -6,6 +6,7 @@
 #define TRIGGER_SOUND_MISS 0x02
 #define TRIGGER_SOUND_LOSE 0x03
 #define TRIGGER_SOUND_WIN 0x04
+#define TRIGGER_SOUND_ENGINE 0x05 
 
 /* ===== SOUND STATE ===== */
 bool soundActive = false;
@@ -50,13 +51,28 @@ const music_notes music[] PROGMEM = {
   {g5_freq, 80,short_gap},
   {c6_freq, 80,short_gap},
   {g5_freq, 400,0}, // hold last note
-  {0, 0,0} // end marker
+{45,100,-1},   // rumble  #ENGINESOUND_INDEX=11
+{50,100,-1},
+{55,100,-1},
+{60,100,-1},
+{70,100,-1},
+{80,100,-1},
+{90,100,-1},
+{80,100,-1},
+{70,100,-1},
+{60,100,-1},
+{55,100,-1},
+{50,100,-1},
+{46,100,0},
+  {0, 0,0} // end marker no longer used
 };
 // these are manual pointers into the music array.
 #define FIRESOUND_INDEX 0
 #define MISSOUND_INDEX 1
 #define LOSESOUND_INDEX 2
 #define WINSOUND_INDEX 6
+#define ENGINESOUND_INDEX 11
+
 
 
 
@@ -91,9 +107,14 @@ void missSound() {
   triggered_sound=TRIGGER_SOUND_MISS;
 }
 
+void engineSound() {
+  startSound(ENGINESOUND_INDEX);   // low buzz
+  triggered_sound=TRIGGER_SOUND_ENGINE;
+}
+
 void looseSound() {
   startSound(LOSESOUND_INDEX);   // betoven notes
-  triggered_sound=TRIGGER_SOUND_WIN;
+  triggered_sound=TRIGGER_SOUND_WIN;// play the other sound on the other device
 }
 
 void winSound() {
@@ -110,15 +131,20 @@ void updateSound() {
 
 
   if (soundActive && millis() >= soundEndTime) {
-    noTone(BUZZER_PIN);
+    if ( music[current_sound_index].gap_after == -1 ) {
+      // no sound gap do nothing. 
+    }else
+    {
+        noTone(BUZZER_PIN);// causes clicks in continous sounds. 
+    };
     // check for multi-note sound effects
     if (music[current_sound_index].gap_after == 0) {
     soundActive = false;
     shockwavesound=0;
-    Serial.println("Sound ended");
+    //Serial.println("Sound ended");
     } else {
       // did we play the gap between notes already? if not, play it now.
-      if ((currently_in_sound_gap==0) && (music[current_sound_index].gap_after > 0)) {
+      if (((currently_in_sound_gap==0)||music[current_sound_index].gap_after == -1 ) && (music[current_sound_index].gap_after > 0)) {
         Serial.println("starting gap");
         // we just played a note, now play the gap before the next note.
         noTone(BUZZER_PIN); // silence for gaps

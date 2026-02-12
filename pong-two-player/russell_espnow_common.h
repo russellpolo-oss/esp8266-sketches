@@ -7,6 +7,7 @@
 #define PKT_STATE 0x04
 #define PKT_FORCE_READY 0x05
 #define PKT_YOUARECLIENT 0x06
+#define PKT_STATE_COMBAT 0x07
 
 
 /* ===== PACKET STRUCTS ===== */
@@ -53,7 +54,22 @@ struct YouAreClient {
   uint8_t type;   // PKT_FORCE_READY
 };
 
-
+struct StateCombatPacket {
+  uint8_t type;
+  int8_t tank_M_X;
+  int8_t tank_M_Y;
+  int8_t tank_M_dir;
+  int8_t tank_C_X;
+  int8_t tank_C_Y;
+  int8_t tank_C_dir;
+  int8_t shell_M_X; // -1 if no shell
+  int8_t shell_M_Y;
+  int8_t shell_C_X; // -1 if no shell
+  int8_t shell_C_Y;
+  uint8_t scoreLeft;
+  uint8_t scoreRight;
+  uint8_t sound_trigger;
+};
 
 
 /* ===================================================== */
