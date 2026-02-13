@@ -36,6 +36,17 @@ float tank_M_y = (SCREEN_HEIGHT - 8) / 2.0f;  // ~28.0
 float tank_C_x = 118.0f;                    // start near right edge
 float tank_C_y = (SCREEN_HEIGHT - 8) / 2.0f;
 
+float shell_M_x = 0.0f;         // tack shell postions as floats.            
+float shell_M_y = 0.0f; 
+int shell_M_n = 0;           // track life of shell in frames (0 = not active, >0 = active)   
+int8_t shell_M_dir = 0;       // direction of shell (0-15) if active    
+float shell_C_x = 0.0f;                   
+float shell_C_y = 0.0f;  
+int shell_C_n = 0;
+int8_t shell_C_dir = 0;
+
+#define MAX_SHELL_LIFE  120   // frames before shell disappears
+
 // Timing for rotation rate limiting
 unsigned long last_rot_time = 0;
 
@@ -76,11 +87,7 @@ void loop() {
   int     joy_value = analogRead(JOY_PIN);          // ESP8266 A0 (0..1023)
   int    fire_value = digitalRead(BUTTON_PIN);    // LOW when pressed
 
-  if (fire_value == LOW) {
-    // Fire button pressed - for demo, just trigger the sound effect
-    engineSound();
-  }
-
+ 
   // ─── Rotation (simple threshold + rate limit) ───
   if (rot_value > ROT_LEFT_TH) {
     if (now - last_rot_time > 120) {  // 120 ms cooldown – adjust as needed
@@ -108,43 +115,6 @@ void loop() {
  // 16-direction movement tables (direction 0 = UP, clockwise)
 // Generated with sin/cos - direction 0 is straight up
 
-static const float dx_table[16] = {
-     0.000f,   // dir  0  ( -90.0°)
-     0.383f,   // dir  1  ( -67.5°)
-     0.707f,   // dir  2  ( -45.0°)
-     0.924f,   // dir  3  ( -22.5°)
-     1.000f,   // dir  4  (   0.0°)
-     0.924f,   // dir  5  (  22.5°)
-     0.707f,   // dir  6  (  45.0°)
-     0.383f,   // dir  7  (  67.5°)
-     0.000f,   // dir  8  (  90.0°)
-    -0.383f,   // dir  9  ( 112.5°)
-    -0.707f,   // dir 10  ( 135.0°)
-    -0.924f,   // dir 11  ( 157.5°)
-    -1.000f,   // dir 12  ( 180.0°)
-    -0.924f,   // dir 13  ( 202.5°)
-    -0.707f,   // dir 14  ( 225.0°)
-    -0.383f,    // dir 15  ( 247.5°)
-};
-
-static const float dy_table[16] = {
-    -1.000f,   // dir  0  ( -90.0°)
-    -0.924f,   // dir  1  ( -67.5°)
-    -0.707f,   // dir  2  ( -45.0°)
-    -0.383f,   // dir  3  ( -22.5°)
-     0.000f,   // dir  4  (   0.0°)
-     0.383f,   // dir  5  (  22.5°)
-     0.707f,   // dir  6  (  45.0°)
-     0.924f,   // dir  7  (  67.5°)
-     1.000f,   // dir  8  (  90.0°)
-     0.924f,   // dir  9  ( 112.5°)
-     0.707f,   // dir 10  ( 135.0°)
-     0.383f,   // dir 11  ( 157.5°)
-     0.000f,   // dir 12  ( 180.0°)
-    -0.383f,   // dir 13  ( 202.5°)
-    -0.707f,   // dir 14  ( 225.0°)
-    -0.924f,    // dir 15  ( 247.5°)
-};
     float dx = dx_table[combat.tank_M_dir];
     float dy = dy_table[combat.tank_M_dir];
 
@@ -155,6 +125,59 @@ static const float dy_table[16] = {
     tank_M_y = constrain(new_y, 0.0f, (float)SCREEN_HEIGHT - 8.0f);
 
   }
+
+  // detect fire button press to launch shell
+  if (fire_value == LOW && shell_M_n == 0) { // only fire if no active shell
+    shell_M_n = 1; // activate shell
+    shell_M_x = tank_M_x + 4.0f; // start at center of tank
+    shell_M_y = tank_M_y + 4.0f;
+    shell_M_dir = combat.tank_M_dir; // fire in direction tank is facing
+    combat.shell_M_X = (int8_t)shell_M_x; // update combat struct for network transmission
+    combat.shell_M_Y = (int8_t)shell_M_y;
+    shellSound();
+  }
+
+// FIXED shell movement - with CLAMP + proper bounce detection
+if (shell_M_n > 0) {
+    float shell_speed = 2.0f;
+    // Move shell
+    shell_M_x += dx_table[shell_M_dir] * shell_speed;
+    shell_M_y += dy_table[shell_M_dir] * shell_speed;   
+    
+    // ← NEW: CLAMP positions to screen bounds (prevents deep overshoot & oscillation)
+    shell_M_x = constrain(shell_M_x, 0.0f, 127.0f);
+    shell_M_y = constrain(shell_M_y, 0.0f, 63.0f);
+    
+    // Update combat struct (integer position for drawing/network)
+    combat.shell_M_X = (int8_t)shell_M_x;
+    combat.shell_M_Y = (int8_t)shell_M_y;
+    
+    // Life tracking
+    shell_M_n++;
+    if (shell_M_n > MAX_SHELL_LIFE) {
+        shell_M_n = 0;
+        combat.shell_M_X = -1;
+        combat.shell_M_Y = -1;
+    }
+    else{
+    // Wall collision check at CLAMPED integer position
+    if (wall_hit(frame_bitmap[current_background_frame], combat.shell_M_X, combat.shell_M_Y)) {
+        // ← FIXED: Proper detection - vertical wall if AT LEAST ONE horizontal neighbor is OPEN (empty)
+        // Works perfectly for thin vertical walls (borders/middle) vs. full horizontal walls (top/bottom)
+        bool hit_vertical = (!wall_hit(frame_bitmap[current_background_frame], combat.shell_M_X - 1, combat.shell_M_Y)) ||
+                            (!wall_hit(frame_bitmap[current_background_frame], combat.shell_M_X + 1, combat.shell_M_Y));
+        
+        if (hit_vertical) {
+            shell_M_dir = bounce_table_v[shell_M_dir];  // Reverse horizontal component
+        } else {
+            shell_M_dir = bounce_table_h[shell_M_dir];  // Reverse vertical component
+        }
+        // bounceSound();  // ← SUGGEST: rename from fireSound() to avoid confusion
+        fireSound();
+      }
+    };
+}
+  
 
   // ─── Draw ───
   display.clearDisplay();
@@ -174,6 +197,16 @@ static const float dy_table[16] = {
   display.drawBitmap(combat.tank_M_X, combat.tank_M_Y, tank[combat.tank_M_dir], 8, 8, SSD1306_WHITE);
   // Client tank  
   display.drawBitmap(combat.tank_C_X, combat.tank_C_Y, tank[combat.tank_C_dir], 8, 8, SSD1306_WHITE);
+  
+  // draw shells if active
+  if (shell_M_n > 0) {
+    display.fillCircle(combat.shell_M_X + 2, combat.shell_M_Y + 2, 2, SSD1306_WHITE); // simple circle for shell
+  }
+  if (shell_C_n > 0) {
+    display.fillCircle(combat.shell_C_X + 2, combat.shell_C_Y + 2, 2, SSD1306_WHITE);
+  } 
+  
+  
   display.display();
   updateSound();
 

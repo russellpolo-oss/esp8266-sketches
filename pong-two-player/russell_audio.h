@@ -102,6 +102,12 @@ void fireSound() {
   triggered_sound=TRIGGER_SOUND_BOUNCE;
 }
 
+void shellSound() {  // currenrtly same as bounce, will update
+  startSound(FIRESOUND_INDEX);   // short, sharp laser
+  triggered_sound=TRIGGER_SOUND_BOUNCE;
+}
+
+
 void missSound() {
   startSound(MISSOUND_INDEX);   // low buzz
   triggered_sound=TRIGGER_SOUND_MISS;
