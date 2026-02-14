@@ -254,9 +254,6 @@ Serial.println("wall_hit: x=" + String(x) + " y=" + String(y) + " byte_idx=" + S
     return b & bit_mask;
 }
 
-/// combat global variables
-/// just store them all in a global var 
-StateCombatPacket combat;
 
 
 static const float dx_table[16] = {

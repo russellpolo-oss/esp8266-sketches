@@ -8,6 +8,7 @@
 #define PKT_FORCE_READY 0x05
 #define PKT_YOUARECLIENT 0x06
 #define PKT_STATE_COMBAT 0x07
+#define PKT_INPUT_COMBAT 0x08
 
 
 /* ===== PACKET STRUCTS ===== */
@@ -55,7 +56,7 @@ struct YouAreClient {
 };
 
 struct StateCombatPacket {
-  uint8_t type;
+  uint8_t type;  // PKT_STATE_COMBAT
   int8_t tank_M_X;
   int8_t tank_M_Y;
   int8_t tank_M_dir;
@@ -71,6 +72,20 @@ struct StateCombatPacket {
   uint8_t sound_trigger;
 };
 
+/// combat global variables
+/// just store them all in a global var 
+StateCombatPacket combat;
+
+
+struct InputPacketCombat {
+  uint8_t type;           // PKT_INPUT_COMBAT
+  int16_t rot_value;      // ADS1115 A0 (0..32767)
+  int     joy_value;      // ESP8266 A0 (0..1023)
+  uint8_t claimedMaster;  // 1 = I think I'm master, 0 = I think I'm client
+  uint8_t click; // used for fire button in combat
+};
+
+InputPacketCombat Client_data; // global used for receiving client input in combat game
 
 /* ===================================================== */
 /* ================== ESP-NOW CALLBACK ================= */
@@ -198,6 +213,25 @@ if (type == PKT_READY) {
     localReady = remoteReady = false;
     return;
   }
+
+  if (type == PKT_STATE_COMBAT) {  // client reveives combat status from master
+   // InputPacketCombat pkt; overwrite global data
+    memcpy(&combat  , incomingData, sizeof(combat));
+    
+    return;
+  }
+  
+  if(type== PKT_INPUT_COMBAT){  // client sends input to master
+    memcpy(&Client_data, incomingData, sizeof(Client_data));
+    // store in global for processing in main loop
+        // Role conflict check
+    bool peerClaimsMaster = (Client_data.claimedMaster == 1);
+    if (peerClaimsMaster == isMaster) {
+      // Both claim same role → conflict!
+      roleConflictDetected = true;
+    return;
+    }
+  };
 }
 /* ===================================================== */
 /* ================== ESP-NOW SEND ===================== */
@@ -253,5 +287,23 @@ void sendForceReady() {
   pkt.scoreLeft = scoreLeft;
   pkt.scoreRight = scoreRight;
   pkt.sound_trigger=triggered_sound;
+  esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
+}
+
+void sendCombatState() {
+  
+  combat.type = PKT_STATE_COMBAT;  // just to be sure.
+    esp_now_send(partnerMac, (uint8_t*)&combat, sizeof(combat));
+  combat.sound_trigger=TRIGGER_SOUND_NONE; // only sendthe triggerd sound once. 
+}
+
+void sendCombatInput() {
+  InputPacketCombat pkt;
+  pkt.type = PKT_INPUT_COMBAT;
+  pkt.rot_value = ads.readADC_SingleEnded(0);   // ADS1115 A0 (0..32767)
+  pkt.joy_value = analogRead(JOY_PIN);          // ESP8266 A0 (0..1023)
+  pkt.claimedMaster = isMaster ? 1 : 0;
+  pkt.click = (digitalRead(BUTTON_PIN) == LOW ) ? 1 : 0; // fire button
+
   esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
 }

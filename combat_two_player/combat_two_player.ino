@@ -4,11 +4,6 @@
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_ADS1X15.h>
 #include <ESP8266WiFi.h>
-#include "russell_esp8266_oled_common.h"
-#include "russell_audio.h"
-#include "pong_game_defs.h"
-#include "russell_espnow_common.h"
-#include "combat_defs.h"
 
 Adafruit_ADS1115 ads;
 
@@ -28,6 +23,18 @@ Adafruit_ADS1115 ads;
 // Movement tuning
 #define MAX_SPEED     0.8f      // pixels per frame at full deflection
 #define ROT_SPEED     120.0f    // milliseconds per direction change at full deflection
+
+
+
+
+#include "russell_esp8266_oled_common.h"
+#include "russell_audio.h"
+#include "pong_game_defs.h"
+#include "russell_espnow_common.h"
+#include "combat_defs.h"
+
+
+
 
 // Tank state locally stored as floats. 
 float tank_M_x = 10.0f;                     // start near left edge
@@ -69,6 +76,19 @@ void setup() {
   }
   ads.setGain(GAIN_ONE);
 
+ WiFi.mode(WIFI_STA);
+WiFi.disconnect();
+delay(100);
+  if (esp_now_init() != 0) {
+    Serial.println("ESP-NOW init failed");
+    for(;;);
+  } 
+
+  esp_now_set_self_role(ESP_NOW_ROLE_COMBO);
+  esp_now_register_recv_cb(onDataRecv);  // ← ESP-NOW receive callback active
+
+Serial.println("Discovery broadcasts every ~800 ms until partner found");
+
   // set starting tank directions. 
 combat.tank_M_dir = 4;                       // 0 = up, 4 = right, etc.
 combat.tank_C_dir = 12;                      // 12 = left  
@@ -87,7 +107,46 @@ void loop() {
   int     joy_value = analogRead(JOY_PIN);          // ESP8266 A0 (0..1023)
   int    fire_value = digitalRead(BUTTON_PIN);    // LOW when pressed
 
- 
+/// conflicts or timeout ?? 
+
+// Check for detected conflict (from incoming INPUT)
+if (roleConflictDetected && partnerFound) {
+  partnerFound = false;
+  roleConflictDetected = false;
+  gameState = STATE_SEARCHING;
+  localReady = remoteReady = false;
+  // Optional: clear peer list if you want (but not strictly needed)
+  Serial.println("Conflict reset → back to Searching");
+}
+/* check for timeout */
+  if (partnerFound && gameState != STATE_SEARCHING) {
+    if (millis() - lastPacketFromPartner > PARTNER_TIMEOUT_MS) {
+      Serial.println("No packets from partner for 5s → timeout! Reverting to Searching...");
+      partnerFound = false;
+      localReady = remoteReady = false;
+      roleConflictDetected = false;
+      gameState = STATE_SEARCHING;
+     
+      
+    }
+  }
+
+  /* ===== DISCOVERY ===== */
+if (!partnerFound && millis() - lastDiscoverySend > 800) {  // was 500
+  sendDiscovery();
+  lastDiscoverySend = millis();
+Serial.println("Discovery packet sent");
+}
+
+
+if (!isMaster) {
+  /* ===== SEND INPUT ===== */
+  if (partnerFound && millis() - lastInputSend > 30) {
+    sendCombatInput(); // reads all the raw data and sends to master for processing
+    lastInputSend = millis();
+  }
+} // client just sents raw values to master
+else { 
   // ─── Rotation (simple threshold + rate limit) ───
   if (rot_value > ROT_LEFT_TH) {
     if (now - last_rot_time > 120) {  // 120 ms cooldown – adjust as needed
@@ -177,7 +236,12 @@ if (shell_M_n > 0) {
       }
     };
 }
-  
+// send client update 
+if (partnerFound && millis() - lastInputSend > 30) {
+    sendCombatState(); // master sends full state to client every frame for drawing and client input processing 
+    lastInputSend = millis();
+    };
+}; // end of master-only logic
 
   // ─── Draw ───
   display.clearDisplay();
@@ -206,6 +270,38 @@ if (shell_M_n > 0) {
     display.fillCircle(combat.shell_C_X + 2, combat.shell_C_Y + 2, 2, SSD1306_WHITE);
   } 
   
+ // Draw negoations and status
+ if (gameState == STATE_SEARCHING) {
+  display.setCursor(20, 28);
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.print("Searching...");
+}
+
+if (gameState == STATE_READY) {
+  // Button handling — always run when in READY
+  static bool lastBtn = HIGH;
+  bool btn = digitalRead(BTN_PIN);
+
+  if (lastBtn == HIGH && btn == LOW && !localReady) {
+    localReady = true;
+    sendReady();
+    Serial.println("Local ready pressed & sent PKT_READY");
+  }
+  lastBtn = btn;
+
+  // Draw ready screen elements
+  display.setCursor(50, 22);
+  display.print("Ready?");
+
+  display.setCursor(30, 34);
+  display.print(localReady  ? "You: OK" : "You: --");
+
+  display.setCursor(30, 44);
+  display.print(remoteReady ? "Them: OK" : "Them: --");
+
+}
+
   
   display.display();
   updateSound();
