@@ -138,12 +138,13 @@ void onDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
     partnerFound = true;
     gameState = STATE_READY;
 
-    // Immediately force the sender to client role
-    YouAreClient force;
-    force.type = PKT_YOUARECLIENT;
-    esp_now_send(partnerMac, (uint8_t*)&force, sizeof(force));
+    // ques sending of YOU_ARE_CLIENT force the sender to client role
+    send_youareclient=2; // sent it 2x  
+    //YouAreClient force;
+    //force.type = PKT_YOUARECLIENT;
+    //esp_now_send(partnerMac, (uint8_t*)&force, sizeof(force));
 
-    Serial.printf("Received discovery first → I am MASTER (sent YouAreClient)\n");
+    Serial.printf("Received discovery first → I am MASTER (qued YouAreClient)\n");
     Serial.printf("  Partner MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
                   mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
     return;
@@ -273,6 +274,11 @@ void sendReady() {
   esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
 }
 
+void sendYouAreClient() {
+  YouAreClient pkt;
+  pkt.type = PKT_YOUARECLIENT;
+  esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
+};
 
 
 void sendState() {

@@ -40,6 +40,7 @@ bool isMaster = false;
 bool partnerFound = false;
 uint8_t partnerMac[6];
 bool roleConflictDetected = false;
+int send_youareclient=0; // flag to trigger sending of YOU_ARE_CLIENT packet.
 
 /* ===== PADDLES ===== */
 /* ===== PADDLES (updated globals) ===== */

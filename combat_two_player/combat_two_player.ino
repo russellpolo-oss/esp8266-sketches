@@ -59,6 +59,7 @@ unsigned long last_rot_time = 0;
 unsigned long last_rot_time_client = 0; // track client rotation separately for smoother control
 
 
+
 void reset_game_combat() {
   combat.type = PKT_STATE_COMBAT;
   combat.tank_M_X = (int8_t)tank_M_x; // update combat struct for network transmission
@@ -131,6 +132,7 @@ if (roleConflictDetected && partnerFound) {
   roleConflictDetected = false;
   gameState = STATE_SEARCHING;
   localReady = remoteReady = false;
+  send_youareclient=0;
   // Optional: clear peer list if you want (but not strictly needed)
   Serial.println("Conflict reset → back to Searching");
 }
@@ -141,6 +143,7 @@ if (roleConflictDetected && partnerFound) {
       partnerFound = false;
       localReady = remoteReady = false;
       roleConflictDetected = false;
+      send_youareclient=0;
       gameState = STATE_SEARCHING;
      
       
@@ -163,6 +166,13 @@ if (!isMaster) {
   }
 } // client just sents raw values to master
 else { 
+
+  if (send_youareclient>0) { // trigger sending of YOU_ARE_CLIENT packet to force partner to client role
+    sendYouAreClient();
+    send_youareclient--; 
+    Serial.println("Sent YOUARECLIENT packet to partner to force them to CLIENT role");
+  }
+
   //master computes the game status. 
   // roate master ?
   // ─── Rotation (simple threshold + rate limit) ───
