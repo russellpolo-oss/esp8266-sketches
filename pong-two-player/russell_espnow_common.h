@@ -98,6 +98,7 @@ void onDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
   if (type == PKT_DISCOVERY && partnerFound) 
     {
     Serial.println("Bogus Discovery packet received");
+    delay(random(100,300)); // random short delay to reduce chance of both devices repeatedly colliding in discovery if something goes wrong
     return;
     };
 
@@ -120,6 +121,7 @@ void onDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
     partnerFound = true;
     isMaster = false;
     gameState = STATE_READY;
+    lastPacketFromPartner = millis();
     Serial.println("Received YOUARECLIENT → forced to CLIENT role");
     return;
   }
@@ -151,6 +153,13 @@ if (type == PKT_READY) {
   remoteReady = true;
   Serial.printf("Received PKT_READY from partner! remoteReady now true (sender MAC: %02X:%02X:...)\n",
                 mac[0], mac[1]);
+  if (localReady && remoteReady) {
+   
+      gameState = STATE_PLAYING;
+      Client_data.click=1; // reset client click state at start of game
+      Serial.println("Both ready → starting game!");
+    
+  }
   return;
 }
 
@@ -217,12 +226,14 @@ if (type == PKT_READY) {
   if (type == PKT_STATE_COMBAT) {  // client reveives combat status from master
    // InputPacketCombat pkt; overwrite global data
     memcpy(&combat  , incomingData, sizeof(combat));
-    
+    Serial.println("Received combat state from master: tank_C_dir=" + String(combat.tank_C_dir) + " tank_M_X=" + String(combat.tank_M_X) + " tank_M_Y=" + String(combat.tank_M_Y) + " shell_M_X=" + String(combat.shell_M_X) + " shell_M_Y=" + String(combat.shell_M_Y) + " shell_C_X=" + String(combat.shell_C_X) + " shell_C_Y=" + String(combat.shell_C_Y));
+
     return;
   }
   
   if(type== PKT_INPUT_COMBAT){  // client sends input to master
     memcpy(&Client_data, incomingData, sizeof(Client_data));
+    Serial.println("combat client data receidved: rot=" + String(Client_data.rot_value) + " joy=" + String(Client_data.joy_value) + " click=" + String(Client_data.click));
     // store in global for processing in main loop
         // Role conflict check
     bool peerClaimsMaster = (Client_data.claimedMaster == 1);
@@ -303,7 +314,7 @@ void sendCombatInput() {
   pkt.rot_value = ads.readADC_SingleEnded(0);   // ADS1115 A0 (0..32767)
   pkt.joy_value = analogRead(JOY_PIN);          // ESP8266 A0 (0..1023)
   pkt.claimedMaster = isMaster ? 1 : 0;
-  pkt.click = (digitalRead(BUTTON_PIN) == LOW ) ? 1 : 0; // fire button
+  pkt.click = (digitalRead(BUTTON_PIN) == LOW ) ? 0 : 1; // fire button
 
   esp_now_send(partnerMac, (uint8_t*)&pkt, sizeof(pkt));
 }

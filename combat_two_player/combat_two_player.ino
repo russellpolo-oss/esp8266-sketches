@@ -56,6 +56,26 @@ int8_t shell_C_dir = 0;
 
 // Timing for rotation rate limiting
 unsigned long last_rot_time = 0;
+unsigned long last_rot_time_client = 0; // track client rotation separately for smoother control
+
+
+void reset_game_combat() {
+  combat.type = PKT_STATE_COMBAT;
+  combat.tank_M_X = (int8_t)tank_M_x; // update combat struct for network transmission
+  combat.tank_M_Y = (int8_t)tank_M_y;
+  combat.tank_M_dir = 4;
+  combat.tank_C_X = (int8_t)tank_C_x; // update combat struct for network transmission
+  combat.tank_C_Y = (int8_t)tank_C_y;
+  combat.tank_C_dir = 12;
+  combat.shell_M_X = -1; // -1 if no shell
+  combat.shell_M_Y = -1;
+  combat.shell_C_X = -1; // -1 if no shell
+  combat.shell_C_Y = -1;
+  combat.scoreLeft = 0;
+  combat.scoreRight = 0;
+  combat.sound_trigger = 0;
+}
+
 
 
 void setup() {
@@ -88,12 +108,8 @@ delay(100);
   esp_now_register_recv_cb(onDataRecv);  // ← ESP-NOW receive callback active
 
 Serial.println("Discovery broadcasts every ~800 ms until partner found");
-
-  // set starting tank directions. 
-combat.tank_M_dir = 4;                       // 0 = up, 4 = right, etc.
-combat.tank_C_dir = 12;                      // 12 = left  
-
-
+  
+reset_game_combat();  // sync up initial combat state
 
   display.clearDisplay();
   display.display();
@@ -147,6 +163,8 @@ if (!isMaster) {
   }
 } // client just sents raw values to master
 else { 
+  //master computes the game status. 
+  // roate master ?
   // ─── Rotation (simple threshold + rate limit) ───
   if (rot_value > ROT_LEFT_TH) {
     if (now - last_rot_time > 120) {  // 120 ms cooldown – adjust as needed
@@ -161,6 +179,25 @@ else {
       last_rot_time = now;
     }
   }
+  // roate client. 
+    if (Client_data.rot_value > ROT_LEFT_TH) {
+    if (now - last_rot_time_client > 120) {  // 120 ms cooldown – adjust as needed
+      if (combat.tank_C_dir == 0) combat.tank_C_dir = 15;
+      else combat.tank_C_dir--;
+      last_rot_time_client = now;
+    }
+  }
+  else if (Client_data.rot_value < ROT_RIGHT_TH) {
+    if (now - last_rot_time_client > 120) {
+      combat.tank_C_dir = (combat.tank_C_dir + 1) % 16;
+      last_rot_time_client = now;
+    }
+  }
+ 
+
+
+
+// move master.
 
   // ─── Movement (analog speed with floating point position) ───
   float joy_norm = (float)(joy_value - JOY_CENTER) / (1023.0f - JOY_CENTER);
@@ -182,10 +219,41 @@ else {
     // Clamp to screen edges (tank is 8×8)
     tank_M_x = constrain(new_x, 0.0f, (float)SCREEN_WIDTH - 8.0f);
     tank_M_y = constrain(new_y, 0.0f, (float)SCREEN_HEIGHT - 8.0f);
+    combat.tank_M_X = (int8_t)tank_M_x; // update combat struct for network transmission
+    combat.tank_M_Y = (int8_t)tank_M_y;
 
   }
 
-  // detect fire button press to launch shell
+/// move client. 
+
+  // ─── Movement (analog speed with floating point position) ───
+   joy_norm = (float)(Client_data.joy_value - JOY_CENTER) / (1023.0f - JOY_CENTER);
+
+  speed = 0.0f;
+  if (fabs(joy_norm) > (JOY_DEADZONE / 512.0f)) {
+    speed = constrain(joy_norm, -1.0f, 1.0f) * MAX_SPEED;
+  }
+
+  if (speed != 0.0f) {
+ // 16-direction movement tables (direction 0 = UP, clockwise)
+// Generated with sin/cos - direction 0 is straight up
+
+    float dx = dx_table[combat.tank_C_dir];
+    float dy = dy_table[combat.tank_C_dir];
+
+    float new_x = tank_C_x + dx * speed;
+    float new_y = tank_C_y + dy * speed;
+    // Clamp to screen edges (tank is 8×8)
+    tank_C_x = constrain(new_x, 0.0f, (float)SCREEN_WIDTH - 8.0f);
+    tank_C_y = constrain(new_y, 0.0f, (float)SCREEN_HEIGHT - 8.0f);
+    combat.tank_C_X = (int8_t)tank_C_x; // update combat struct for network transmission
+    combat.tank_C_Y = (int8_t)tank_C_y;
+
+  }
+
+
+//if (gameState == STATE_PLAYING) { 
+  // detect fire button press to launch shell (master)
   if (fire_value == LOW && shell_M_n == 0) { // only fire if no active shell
     shell_M_n = 1; // activate shell
     shell_M_x = tank_M_x + 4.0f; // start at center of tank
@@ -196,7 +264,20 @@ else {
     shellSound();
   }
 
-// FIXED shell movement - with CLAMP + proper bounce detection
+  // detect fire button press to launch shell (client)
+  if (Client_data.click == LOW && shell_C_n == 0 && gameState == STATE_PLAYING) { // only fire if no active shell
+    shell_C_n = 1; // activate shell
+    shell_C_x = tank_C_x + 4.0f; // start at center of tank
+    shell_C_y = tank_C_y + 4.0f;
+    shell_C_dir = combat.tank_C_dir; // fire in direction tank is facing
+    combat.shell_C_X = (int8_t)shell_C_x; // update combat struct for network transmission
+    combat.shell_C_Y = (int8_t)shell_C_y;
+    shellSound();
+  }
+
+
+
+// FIXED shell movement - with CLAMP + proper bounce detection (master)
 if (shell_M_n > 0) {
     float shell_speed = 2.0f;
     // Move shell
@@ -235,7 +316,51 @@ if (shell_M_n > 0) {
         fireSound();
       }
     };
-}
+  }; // master shell logic
+
+   /// update client shell with same logic.
+if (shell_C_n > 0) {
+    float shell_speed = 2.0f;
+    // Move shell
+    shell_C_x += dx_table[shell_C_dir] * shell_speed;
+    shell_C_y += dy_table[shell_C_dir] * shell_speed;   
+    
+    // ← NEW: CLAMP positions to screen bounds (prevents deep overshoot & oscillation)
+    shell_C_x = constrain(shell_C_x, 0.0f, 127.0f);
+    shell_C_y = constrain(shell_C_y, 0.0f, 63.0f);
+    
+    // Update combat struct (integer position for drawing/network)
+    combat.shell_C_X = (int8_t)shell_C_x;
+    combat.shell_C_Y = (int8_t)shell_C_y;
+    
+    // Life tracking
+    shell_C_n++;
+    if (shell_C_n > MAX_SHELL_LIFE) {
+        shell_C_n = 0;
+        combat.shell_C_X = -1;
+        combat.shell_C_Y = -1;
+    }
+    else{
+    // Wall collision check at CLAMPED integer position
+    if (wall_hit(frame_bitmap[current_background_frame], combat.shell_C_X, combat.shell_C_Y)) {
+        // ← FIXED: Proper detection - vertical wall if AT LEAST ONE horizontal neighbor is OPEN (empty)
+        // Works perfectly for thin vertical walls (borders/middle) vs. full horizontal walls (top/bottom)
+        bool hit_vertical = (!wall_hit(frame_bitmap[current_background_frame], combat.shell_C_X - 1, combat.shell_C_Y)) ||
+                            (!wall_hit(frame_bitmap[current_background_frame], combat.shell_C_X + 1, combat.shell_C_Y));
+        
+        if (hit_vertical) {
+            shell_C_dir = bounce_table_v[shell_C_dir];  // Reverse horizontal component
+        } else {
+            shell_C_dir = bounce_table_h[shell_C_dir];  // Reverse vertical component
+        }
+        // bounceSound();  // ← SUGGEST: rename from fireSound() to avoid confusion
+        fireSound();
+      }
+    };
+};// end of clent shell logic
+
+//}; // only do shells if we are in playing state.
+
 // send client update 
 if (partnerFound && millis() - lastInputSend > 30) {
     sendCombatState(); // master sends full state to client every frame for drawing and client input processing 
@@ -249,24 +374,18 @@ if (partnerFound && millis() - lastInputSend > 30) {
   // draw the playfield
   display.drawBitmap(0, 0, frame_bitmap[current_background_frame], 128, 64, SSD1306_WHITE);
   
-      // save int values in the combat struct for drawing and network transmission
-    combat.tank_M_X = (int)tank_M_x;
-    combat.tank_M_Y = (int)tank_M_y; 
-
-    combat.tank_C_X = (int)tank_C_x;
-    combat.tank_C_Y = (int)tank_C_y;   
-
-
   // Master tank – truncate float to int for drawing
   display.drawBitmap(combat.tank_M_X, combat.tank_M_Y, tank[combat.tank_M_dir], 8, 8, SSD1306_WHITE);
+  Serial.println("Displaying  tank data from master: tank_C_dir=" + String(combat.tank_C_dir) + " tank_M_X=" + String(combat.tank_M_X) + " tank_M_Y=" + String(combat.tank_M_Y) + " shell_M_X=" + String(combat.shell_M_X) + " shell_M_Y=" + String(combat.shell_M_Y) + " shell_C_X=" + String(combat.shell_C_X) + " shell_C_Y=" + String(combat.shell_C_Y));
+
   // Client tank  
   display.drawBitmap(combat.tank_C_X, combat.tank_C_Y, tank[combat.tank_C_dir], 8, 8, SSD1306_WHITE);
   
   // draw shells if active
-  if (shell_M_n > 0) {
+  if (combat.shell_M_X > -1 && combat.shell_M_Y > -1) {
     display.fillCircle(combat.shell_M_X + 2, combat.shell_M_Y + 2, 2, SSD1306_WHITE); // simple circle for shell
   }
-  if (shell_C_n > 0) {
+  if (combat.shell_C_X > -1 && combat.shell_C_Y > -1) {
     display.fillCircle(combat.shell_C_X + 2, combat.shell_C_Y + 2, 2, SSD1306_WHITE);
   } 
   
@@ -287,6 +406,11 @@ if (gameState == STATE_READY) {
     localReady = true;
     sendReady();
     Serial.println("Local ready pressed & sent PKT_READY");
+    if( localReady && remoteReady){
+      Serial.println("Both ready → starting game!");
+      gameState = STATE_PLAYING;
+      Client_data.click=1; // reset client click state at start of game
+    }
   }
   lastBtn = btn;
 
@@ -300,9 +424,9 @@ if (gameState == STATE_READY) {
   display.setCursor(30, 44);
   display.print(remoteReady ? "Them: OK" : "Them: --");
 
-}
+};
 
-  
+  drawScores_combat(); // always draw scores includes master/clieent and partner status for debugging.
   display.display();
   updateSound();
 

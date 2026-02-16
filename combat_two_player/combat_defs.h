@@ -249,7 +249,7 @@ bool wall_hit(const uint8_t* bitmap, uint8_t x, uint8_t y) {
    uint16_t byte_idx = y * (uint16_t)(SCREEN_WIDTH >> 3) + (x >> 3);
    uint8_t bit_mask  = 0x80 >> (x & 7); // 10000000 >> (x % 8) shifr 0x80 until it matches the bit we want
     uint8_t b = pgm_read_byte(bitmap + byte_idx);
-Serial.println("wall_hit: x=" + String(x) + " y=" + String(y) + " byte_idx=" + String(byte_idx) + " bit_mask=" + String(bit_mask, BIN) + " byte_value=" + String(b, BIN)+" result=" + String((b & bit_mask) != 0));
+//Serial.println("wall_hit: x=" + String(x) + " y=" + String(y) + " byte_idx=" + String(byte_idx) + " bit_mask=" + String(bit_mask, BIN) + " byte_value=" + String(b, BIN)+" result=" + String((b & bit_mask) != 0));
 
     return b & bit_mask;
 }
@@ -332,3 +332,44 @@ static const uint8_t bounce_table_h[16] = { // for hitting horizontal wall
     10,   // from dir14 (225.0°)
     9    // from dir15 (247.5°)
 } ;
+
+void drawScores_combat() {
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+
+  display.setCursor(12, 2);
+  display.print(combat.scoreLeft);
+  if (isMaster){
+    display.print(" M");
+  }
+    else 
+  {
+    display.print(" C");
+  }
+  if (partnerFound) {
+    display.print(" P");
+  }
+  else {
+    display.print(" -");
+  };
+
+  display.print(" GS:");
+
+  switch(gameState) {
+    case STATE_SEARCHING:
+      display.print("SRCH");
+      break;
+    case STATE_READY:
+      display.print("REDY");
+      break;
+    case STATE_PLAYING:
+      display.print("PLAY");
+      break;
+   
+  } 
+
+  display.setCursor(SCREEN_WIDTH - 15, 2);
+  display.print(combat.scoreRight);
+}
+
+ 
