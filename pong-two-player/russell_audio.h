@@ -7,6 +7,7 @@
 #define TRIGGER_SOUND_LOSE 0x03
 #define TRIGGER_SOUND_WIN 0x04
 #define TRIGGER_SOUND_ENGINE 0x05 
+#define TRIGGER_SOUND_HIT 0x06
 
 /* ===== SOUND STATE ===== */
 bool soundActive = false;
@@ -64,7 +65,16 @@ const music_notes music[] PROGMEM = {
 {55,100,-1},
 {50,100,-1},
 {46,100,0},
-  {0, 0,0} // end marker no longer used
+{45,10,-1}, // COMBAT HIT SOUND  #HIT_SOUND_INDEX=24
+{200,10,-1},
+{45,10,-1},
+{200,10,-1},
+{45,10,-1},
+{200,10,-1},
+{45,10,-1},
+{200,10,-1},
+{45,10,0},
+{0, 0,0} // end marker no longer used
 };
 // these are manual pointers into the music array.
 #define FIRESOUND_INDEX 0
@@ -72,6 +82,7 @@ const music_notes music[] PROGMEM = {
 #define LOSESOUND_INDEX 2
 #define WINSOUND_INDEX 6
 #define ENGINESOUND_INDEX 11
+#define HIT_SOUND_INDEX 24
 
 
 
@@ -112,6 +123,12 @@ void missSound() {
   startSound(MISSOUND_INDEX);   // low buzz
   triggered_sound=TRIGGER_SOUND_MISS;
 }
+
+void hitSound() {
+  startSound(HIT_SOUND_INDEX);   // hit sound
+  triggered_sound=TRIGGER_SOUND_HIT;
+}
+
 
 void engineSound() {
   startSound(ENGINESOUND_INDEX);   // low buzz

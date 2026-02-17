@@ -53,12 +53,37 @@ int shell_C_n = 0;
 int8_t shell_C_dir = 0;
 
 #define MAX_SHELL_LIFE  120   // frames before shell disappears
+#define HIT_DURATRION 90
+int hit_timer = 0; // counts frames since hit for hit effect duration
+enum hit_status { NONE, MASTER, CLIENT };
+hit_status tank_that_was_last_hit = NONE; // track which tank was hit for hit effect
 
 // Timing for rotation rate limiting
 unsigned long last_rot_time = 0;
 unsigned long last_rot_time_client = 0; // track client rotation separately for smoother control
 
+void start_hit_spin(hit_status which_tank) {
+  hit_timer = 0;
+  tank_that_was_last_hit = which_tank;
+  return;
+} 
 
+void update_hit_spin() {
+  if (tank_that_was_last_hit == NONE) return; // no hit active
+
+  hit_timer++;
+  if (hit_timer > HIT_DURATRION) {
+    tank_that_was_last_hit = NONE; // end hit effect after duration
+    return;
+  }
+
+  // During hit effect, spin the hit tank in place
+  if (tank_that_was_last_hit == MASTER) {
+    combat.tank_M_dir = (combat.tank_M_dir + 1) % 16; // spin master tank
+  } else if (tank_that_was_last_hit == CLIENT) {
+    combat.tank_C_dir = (combat.tank_C_dir + 1) % 16; // spin client tank
+  }
+} 
 
 void reset_game_combat() {
   combat.type = PKT_STATE_COMBAT;
@@ -164,7 +189,7 @@ if (!isMaster) {
     sendCombatInput(); // reads all the raw data and sends to master for processing
     lastInputSend = millis();
   }
-} // client just sents raw values to master
+} // client just sends raw values to master
 else { 
 
   if (send_youareclient>0) { // trigger sending of YOU_ARE_CLIENT packet to force partner to client role
@@ -172,6 +197,9 @@ else {
     send_youareclient--; 
     Serial.println("Sent YOUARECLIENT packet to partner to force them to CLIENT role");
   }
+ 
+  update_hit_spin(); // if a hit is active, update the hit spin effect
+
 
   //master computes the game status. 
   // roate master ?
@@ -326,6 +354,21 @@ if (shell_M_n > 0) {
         fireSound();
       }
     };
+   // test if master shell hit client tank
+     if (combat.shell_M_X >= combat.tank_C_X && combat.shell_M_X < combat.tank_C_X + 8 &&
+         combat.shell_M_Y >= combat.tank_C_Y && combat.shell_M_Y < combat.tank_C_Y + 8) {
+           // hit detected
+           combat.scoreLeft++; // master scores
+           
+           Serial.println("Master scored! Current score: " + String(combat.scoreLeft) + " - " + String(combat.scoreRight));
+           hitSound();
+            start_hit_spin(CLIENT); // start hit spin effect on client tank
+           // DESTROY SHELL.
+            shell_M_n = 0;
+            combat.shell_M_X = -1;
+            combat.shell_M_Y = -1;
+         };
+
   }; // master shell logic
 
    /// update client shell with same logic.
@@ -367,6 +410,21 @@ if (shell_C_n > 0) {
         fireSound();
       }
     };
+   // test if client shell hit master tank
+     if (combat.shell_C_X >= combat.tank_M_X && combat.shell_C_X < combat.tank_M_X + 8 &&
+         combat.shell_C_Y >= combat.tank_M_Y && combat.shell_C_Y < combat.tank_M_Y + 8) {
+           // hit detected
+           combat.scoreRight++; // client scores
+           
+           Serial.println("Client scored! Current score: " + String(combat.scoreLeft) + " - " + String(combat.scoreRight));
+           hitSound();
+            start_hit_spin(MASTER); // start hit spin effect on master tank
+           // DESTROY SHELL.
+            shell_C_n = 0;
+            combat.shell_C_X = -1;
+            combat.shell_C_Y = -1;
+         };
+
 };// end of clent shell logic
 
 //}; // only do shells if we are in playing state.
@@ -386,7 +444,7 @@ if (partnerFound && millis() - lastInputSend > 30) {
   
   // Master tank – truncate float to int for drawing
   display.drawBitmap(combat.tank_M_X, combat.tank_M_Y, tank[combat.tank_M_dir], 8, 8, SSD1306_WHITE);
-  Serial.println("Displaying  tank data from master: tank_C_dir=" + String(combat.tank_C_dir) + " tank_M_X=" + String(combat.tank_M_X) + " tank_M_Y=" + String(combat.tank_M_Y) + " shell_M_X=" + String(combat.shell_M_X) + " shell_M_Y=" + String(combat.shell_M_Y) + " shell_C_X=" + String(combat.shell_C_X) + " shell_C_Y=" + String(combat.shell_C_Y));
+  //Serial.println("Displaying  tank data from master: tank_C_dir=" + String(combat.tank_C_dir) + " tank_M_X=" + String(combat.tank_M_X) + " tank_M_Y=" + String(combat.tank_M_Y) + " shell_M_X=" + String(combat.shell_M_X) + " shell_M_Y=" + String(combat.shell_M_Y) + " shell_C_X=" + String(combat.shell_C_X) + " shell_C_Y=" + String(combat.shell_C_Y));
 
   // Client tank  
   display.drawBitmap(combat.tank_C_X, combat.tank_C_Y, tank[combat.tank_C_dir], 8, 8, SSD1306_WHITE);

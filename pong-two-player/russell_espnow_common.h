@@ -227,14 +227,14 @@ if (type == PKT_READY) {
   if (type == PKT_STATE_COMBAT) {  // client reveives combat status from master
    // InputPacketCombat pkt; overwrite global data
     memcpy(&combat  , incomingData, sizeof(combat));
-    Serial.println("Received combat state from master: tank_C_dir=" + String(combat.tank_C_dir) + " tank_M_X=" + String(combat.tank_M_X) + " tank_M_Y=" + String(combat.tank_M_Y) + " shell_M_X=" + String(combat.shell_M_X) + " shell_M_Y=" + String(combat.shell_M_Y) + " shell_C_X=" + String(combat.shell_C_X) + " shell_C_Y=" + String(combat.shell_C_Y));
+   // Serial.println("Received combat state from master: tank_C_dir=" + String(combat.tank_C_dir) + " tank_M_X=" + String(combat.tank_M_X) + " tank_M_Y=" + String(combat.tank_M_Y) + " shell_M_X=" + String(combat.shell_M_X) + " shell_M_Y=" + String(combat.shell_M_Y) + " shell_C_X=" + String(combat.shell_C_X) + " shell_C_Y=" + String(combat.shell_C_Y));
 
     return;
   }
   
   if(type== PKT_INPUT_COMBAT){  // client sends input to master
     memcpy(&Client_data, incomingData, sizeof(Client_data));
-    Serial.println("combat client data receidved: rot=" + String(Client_data.rot_value) + " joy=" + String(Client_data.joy_value) + " click=" + String(Client_data.click));
+    //Serial.println("combat client data receidved: rot=" + String(Client_data.rot_value) + " joy=" + String(Client_data.joy_value) + " click=" + String(Client_data.click));
     // store in global for processing in main loop
         // Role conflict check
     bool peerClaimsMaster = (Client_data.claimedMaster == 1);
