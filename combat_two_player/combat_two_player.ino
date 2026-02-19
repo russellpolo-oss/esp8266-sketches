@@ -54,6 +54,7 @@ int8_t shell_C_dir = 0;
 
 #define MAX_SHELL_LIFE  120   // frames before shell disappears
 #define HIT_DURATRION 90
+#define shell_speed  2.0f
 int no_fire_counter=100;
 int hit_timer = 0; // counts frames since hit for hit effect duration
 enum hit_status { NONE, MASTER, CLIENT };
@@ -321,7 +322,7 @@ if (gameState == STATE_PLAYING) {
 
 // FIXED shell movement - with CLAMP + proper bounce detection (master)
 if (shell_M_n > 0) {
-    float shell_speed = 2.0f;
+   // float shell_speed = 2.0f; // pixels per frame
     // Move shell
     shell_M_x += dx_table[shell_M_dir] * shell_speed;
     shell_M_y += dy_table[shell_M_dir] * shell_speed;   
@@ -377,7 +378,7 @@ if (shell_M_n > 0) {
 
    /// update client shell with same logic.
 if (shell_C_n > 0) {
-    float shell_speed = 2.0f;
+    //float shell_speed = 2.0f;
     // Move shell
     shell_C_x += dx_table[shell_C_dir] * shell_speed;
     shell_C_y += dy_table[shell_C_dir] * shell_speed;   
