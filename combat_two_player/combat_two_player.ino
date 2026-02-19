@@ -54,6 +54,7 @@ int8_t shell_C_dir = 0;
 
 #define MAX_SHELL_LIFE  120   // frames before shell disappears
 #define HIT_DURATRION 90
+int no_fire_counter=100;
 int hit_timer = 0; // counts frames since hit for hit effect duration
 enum hit_status { NONE, MASTER, CLIENT };
 hit_status tank_that_was_last_hit = NONE; // track which tank was hit for hit effect
@@ -100,6 +101,7 @@ void reset_game_combat() {
   combat.scoreLeft = 0;
   combat.scoreRight = 0;
   combat.sound_trigger = 0;
+  no_fire_counter = 100;
 }
 
 
@@ -290,9 +292,11 @@ else {
   }
 
 
-//if (gameState == STATE_PLAYING) { 
+if (gameState == STATE_PLAYING) { 
+  if (no_fire_counter > 0) no_fire_counter--; // decrement no-fire counter if active
+};
   // detect fire button press to launch shell (master)
-  if (fire_value == LOW && shell_M_n == 0) { // only fire if no active shell
+  if (fire_value == LOW && shell_M_n == 0 && no_fire_counter<=1 ) { // only fire if no active shell
     shell_M_n = 1; // activate shell
     shell_M_x = tank_M_x + 4.0f; // start at center of tank
     shell_M_y = tank_M_y + 4.0f;
@@ -303,7 +307,7 @@ else {
   }
 
   // detect fire button press to launch shell (client)
-  if (Client_data.click == LOW && shell_C_n == 0 && gameState == STATE_PLAYING) { // only fire if no active shell
+  if (Client_data.click == LOW && shell_C_n == 0 && no_fire_counter<=1) { // only fire if no active shell
     shell_C_n = 1; // activate shell
     shell_C_x = tank_C_x + 4.0f; // start at center of tank
     shell_C_y = tank_C_y + 4.0f;
