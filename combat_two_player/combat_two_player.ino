@@ -260,6 +260,18 @@ else {
     // Clamp to screen edges (tank is 8×8)
     tank_M_x = constrain(new_x, 0.0f, (float)SCREEN_WIDTH - 8.0f);
     tank_M_y = constrain(new_y, 0.0f, (float)SCREEN_HEIGHT - 8.0f);
+// test 8x8 grid of new position for wall collisions and revert if any hit. Check all 4 corners of tank against bitmap.
+    if (wall_hit(frame_bitmap[current_background_frame], (int8_t)tank_M_x, (int8_t)tank_M_y) ||
+        wall_hit(frame_bitmap[current_background_frame], (int8_t)tank_M_x + 7, (int8_t)tank_M_y) ||
+        wall_hit(frame_bitmap[current_background_frame], (int8_t)tank_M_x, (int8_t)tank_M_y + 7) ||
+        wall_hit(frame_bitmap[current_background_frame], (int8_t)tank_M_x + 7, (int8_t)tank_M_y + 7)) {
+      // collision detected, revert to old position
+      tank_M_x -= dx * speed;
+      tank_M_y -= dy * speed;
+    }
+   
+
+
     combat.tank_M_X = (int8_t)tank_M_x; // update combat struct for network transmission
     combat.tank_M_Y = (int8_t)tank_M_y;
 
@@ -287,6 +299,15 @@ else {
     // Clamp to screen edges (tank is 8×8)
     tank_C_x = constrain(new_x, 0.0f, (float)SCREEN_WIDTH - 8.0f);
     tank_C_y = constrain(new_y, 0.0f, (float)SCREEN_HEIGHT - 8.0f);
+    // test 8x8 grid of new position for wall collisions and revert if any hit. Check all 4 corners of tank against bitmap.
+    if (wall_hit(frame_bitmap[current_background_frame], (int8_t)tank_C_x, (int8_t)tank_C_y) ||
+        wall_hit(frame_bitmap[current_background_frame], (int8_t)tank_C_x + 7, (int8_t)tank_C_y) ||
+        wall_hit(frame_bitmap[current_background_frame], (int8_t)tank_C_x, (int8_t)tank_C_y + 7) ||
+        wall_hit(frame_bitmap[current_background_frame], (int8_t)tank_C_x + 7, (int8_t)tank_C_y + 7)) {
+      // collision detected, revert to old position
+      tank_C_x -= dx * speed;
+      tank_C_y -= dy * speed;
+    };
     combat.tank_C_X = (int8_t)tank_C_x; // update combat struct for network transmission
     combat.tank_C_Y = (int8_t)tank_C_y;
 
