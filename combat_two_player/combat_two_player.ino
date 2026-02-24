@@ -23,8 +23,8 @@ Adafruit_ADS1115 ads;
 // Movement tuning
 #define MAX_SPEED     0.8f      // pixels per frame at full deflection
 #define ROT_SPEED     120.0f    // milliseconds per direction change at full deflection
-
-
+#define GAME_WIN_SCORE  5
+int gameOver=0; // set to 1 when game is over. 
 
 
 #include "russell_esp8266_oled_common.h"
@@ -103,8 +103,31 @@ void reset_game_combat() {
   combat.scoreRight = 0;
   combat.sound_trigger = 0;
   no_fire_counter = 100;
+  gameOver=0;
 }
 
+
+// combat_game_over() display's "Game Over" and "Left Wins" or "Right Wins" based on who won, then resets the game after a delay.
+void combat_game_over() {
+  
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.setCursor(30, 20);
+  if (combat.scoreLeft > combat.scoreRight) {
+    display.print("Game Over");
+    display.setCursor(30, 40);
+    display.print("Left Wins!");
+  } else if (combat.scoreRight > combat.scoreLeft) {
+    display.print("Game Over");
+    display.setCursor(30, 40);
+    display.print("Right Wins!");
+  } else {
+    display.print("Game Over");
+    display.setCursor(30, 40);
+    display.print("It's a tie!");
+  }
+ 
+} 
 
 
 void setup() {
@@ -248,7 +271,7 @@ else {
     speed = constrain(joy_norm, -1.0f, 1.0f) * MAX_SPEED;
   }
 
-  if (speed != 0.0f) {
+  if ((speed != 0.0f)&&(!gameOver))  {  // can't move if game over. 
  // 16-direction movement tables (direction 0 = UP, clockwise)
 // Generated with sin/cos - direction 0 is straight up
 
@@ -287,7 +310,7 @@ else {
     speed = constrain(joy_norm, -1.0f, 1.0f) * MAX_SPEED;
   }
 
-  if (speed != 0.0f) {
+  if ((speed != 0.0f)&&(!gameOver))  {  // can't move if game over.
  // 16-direction movement tables (direction 0 = UP, clockwise)
 // Generated with sin/cos - direction 0 is straight up
 
@@ -318,7 +341,7 @@ if (gameState == STATE_PLAYING) {
   if (no_fire_counter > 0) no_fire_counter--; // decrement no-fire counter if active
 };
   // detect fire button press to launch shell (master)
-  if (fire_value == LOW && shell_M_n == 0 && no_fire_counter<=1 ) { // only fire if no active shell
+  if (fire_value == LOW && shell_M_n == 0 && no_fire_counter<=1 && !gameOver) { // only fire if no active shell
     shell_M_n = 1; // activate shell
     shell_M_x = tank_M_x + 4.0f; // start at center of tank
     shell_M_y = tank_M_y + 4.0f;
@@ -329,7 +352,7 @@ if (gameState == STATE_PLAYING) {
   }
 
   // detect fire button press to launch shell (client)
-  if (Client_data.click == LOW && shell_C_n == 0 && no_fire_counter<=1) { // only fire if no active shell
+  if (Client_data.click == LOW && shell_C_n == 0 && no_fire_counter<=1 && !gameOver ) { // only fire if no active shell
     shell_C_n = 1; // activate shell
     shell_C_x = tank_C_x + 4.0f; // start at center of tank
     shell_C_y = tank_C_y + 4.0f;
@@ -385,6 +408,9 @@ if (shell_M_n > 0) {
          combat.shell_M_Y >= combat.tank_C_Y && combat.shell_M_Y < combat.tank_C_Y + 8) {
            // hit detected
            combat.scoreLeft++; // master scores
+           if (combat.scoreLeft >= GAME_WIN_SCORE) {
+             combat_game_over();
+           };
            
            Serial.println("Master scored! Current score: " + String(combat.scoreLeft) + " - " + String(combat.scoreRight));
            hitSound();
@@ -441,6 +467,9 @@ if (shell_C_n > 0) {
          combat.shell_C_Y >= combat.tank_M_Y && combat.shell_C_Y < combat.tank_M_Y + 8) {
            // hit detected
            combat.scoreRight++; // client scores
+           if(combat.scoreRight >= GAME_WIN_SCORE) {
+             combat_game_over();
+           };
            
            Serial.println("Client scored! Current score: " + String(combat.scoreLeft) + " - " + String(combat.scoreRight));
            hitSound();
@@ -521,6 +550,9 @@ if (gameState == STATE_READY) {
 };
 
   drawScores_combat(); // always draw scores includes master/clieent and partner status for debugging.
+  if (gameOver) {
+    combat_game_over(); // display game over screen if game is over
+  } ;
   display.display();
   updateSound();
 
